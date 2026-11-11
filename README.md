@@ -15,7 +15,7 @@ To solve this, and noting the lack of ChirpIoT-based applications in the open-so
 
 *   **Full-Duplex Communication:** Utilizes ChirpIoT (E29-400T22S module) for reliable, long-range, and bi-directional communication between the indoor and outdoor units.
 *   **Customizable Audio:** Unlike traditional OTP-chip doorbells, this project uses an **ESP32S3** with a built-in Web UI, allowing users to easily upload and customize their own welcome/chime MP3 files.
-*   **Cost-Effective Storage:** Since typical greeting audio files (e.g., "Hello, welcome") are under 5 seconds, even 10 different chimes take less than 60 seconds in total. The ESP32S3's onboard SPI Flash (partitioned with LittleFS) provides enough space (100+ seconds) for audio storage, completely eliminating the need for expensive external storage (like TF cards or SD NAND).
+*   **Cost-Effective Storage:** Since typical greeting audio files (e.g., "Hello, welcome") are under 5 seconds, even 10 different chimes take less than 60 seconds in total. The ESP32S3's onboard SPI Flash (partitioned with LittleFS) provides ample space for audio storage, completely eliminating the need for expensive external storage (like TF cards or SD NAND).
 *   **Multi-Mode Configuration:** The Web UI allows users to independently configure the trigger modes (Welcome / Doorbell / Alarm) and corresponding audio tracks for each outdoor unit (up to 4 units).
 *   **Low Power & Security:** The outdoor unit uses a **CW32L010** (Cortex-M0+) for ultra-low power consumption, supporting both PIR motion detection and manual key triggers. It is powered by a lithium battery and uses a specialized 2.5*0.7mm DC jack for charging to prevent damage from high-voltage attacks.
 
@@ -23,7 +23,7 @@ To solve this, and noting the lack of ChirpIoT-based applications in the open-so
 
 *   **Indoor Unit (Receiver):**
     *   **MCU:** ESP32S3 (with 16MB Flash & 8MB PSRAM)
-    *   **Audio:** ES8311 Codec + I2S
+    *   **Audio:** ES8311 Codec + NS4150B PA (Power Amplifier)
     *   **Wireless:** E29-400T22S (ChirpIoT)
     *   **Power:** Powered via Type-C or 86-box 220V-to-5V module. *(Note: For 3D-printed enclosures, Type-C power is highly recommended for long-term use due to the material's lack of flame retardancy and heat resistance).*
 *   **Outdoor Unit (Transmitter):**
