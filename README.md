@@ -22,8 +22,9 @@ To solve this, and noting the lack of ChirpIoT-based applications in the open-so
 ## 🛠️ Hardware Architecture
 
 *   **Indoor Unit (Receiver):**
-    *   **MCU:** ESP32S3 (with 8MB Flash / PSRAM)
+    *   **MCU:** ESP32S3 (with 16MB Flash & 8MB PSRAM)
     *   **Audio:** ES8311 Codec + I2S
+    *   **Wireless:** E29-400T22S (ChirpIoT)
     *   **Power:** Powered via Type-C or 86-box 220V-to-5V module. *(Note: For 3D-printed enclosures, Type-C power is highly recommended for long-term use due to the material's lack of flame retardancy and heat resistance).*
 *   **Outdoor Unit (Transmitter):**
     *   **MCU:** CW32L010 (ARM Cortex-M0+)
