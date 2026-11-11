@@ -31,6 +31,17 @@ To solve this, and noting the lack of ChirpIoT-based applications in the open-so
     *   **Wireless:** E29-400T22S (ChirpIoT)
     *   **Power:** Lithium battery (Charged via 2.5*0.7mm DC jack)
 
+## 💻 Development Environments
+
+*   **ESP32S3 (Indoor Unit) Firmware:**
+    *   OS: Windows 10
+    *   IDE: VS Code `1.137.0` 
+    *   Extension: `espressif.esp-idf-extension` `2.3.0`
+    *   Framework: ESP-IDF `v5.5.5`
+*   **CW32L010 (Outdoor Unit) Firmware:**
+    *   IDE: uVision `V5.38.0.0` Community Edition (Keil)
+    *   Compiler: ARM Compiler `V5.06 update 7 (build 960)`
+
 ## 💻 Software & Tools
 
 *   **Web Interface:** Provides a user-friendly GUI for configuring WiFi, volume, LED brightness, audio uploads, and viewing real-time battery levels and online status of outdoor units.
