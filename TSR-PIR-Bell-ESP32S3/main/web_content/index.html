@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>TSR PIR Bell - 内机(ESP32S3)</title>
+    <script>
+        /* 未登录先隐藏页面，探针通过再显示；401 直接跳登录页 */
+        document.documentElement.style.display = "none";
+        fetch("/api/auth_check", { method: "GET" })
+            .then(function (resp) {
+                if (resp.ok) {
+                    document.documentElement.style.display = "";
+                } else {
+                    location.replace("login.html");
+                }
+            })
+            .catch(function () {
+                location.replace("login.html");
+            });
+    </script>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <button id="logoutBtn" class="logout-btn" title="退出登录">退出</button>
+
+     <!-- Logo -->
+    <div class="logo-container">
+        <img src="/logo.png" alt="OSHWIR" class="logo">
+    </div>
+
+    <h1>TSR PIR Bell - 内机(ESP32S3)</h1>
+    <p class="subtitle">Open-Source Split PIR Doorbell by motozilog</p>
+
+        <!-- Tab 导航 -->
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="tab-doorbell">外机设置</button>
+        <button class="tab-btn" data-tab="tab-audio">音频设置</button>
+        <button class="tab-btn" data-tab="tab-wifi">内机配置</button>
+        <button class="tab-btn" data-tab="tab-password">更改密码</button>
+    </div>
+
+    <!-- ==================== 外机设置 ==================== -->
+    <div id="tab-doorbell" class="tab-content active">
+        <div class="section">
+            <h2>外机设置</h2>
+
+            <div class="doorbell-status-row" id="doorbellStatusRow"></div>
+
+            <div id="doorbellList">
+                <!-- JS 动态生成 4 行 -->
+            </div>
+            <button id="saveDoorbellBtn" class="action-btn">保存外机配置</button>
+            <div id="doorbellStatus" class="status"></div>
+        </div>
+    </div>
+
+    <!-- ==================== 音频设置 ==================== -->
+    <div id="tab-audio" class="tab-content">
+        <div class="section">
+            <h2>音频设置</h2>
+
+            <div class="boot-audio-block">
+                <div class="boot-audio-row">
+                    <button id="playDefaultBtn" class="play-btn">默认音频</button>
+                    <button id="uploadBootMp3Btn" class="audio-action-btn">更换</button>
+                    <label class="boot-audio-check">
+                        <input type="checkbox" id="bootPlayCheck" checked>
+                        启动时播放
+                    </label>
+                    <span id="bootMp3Status" class="status"></span>
+                </div>
+                <input type="file" id="bootMp3Input" accept=".mp3" style="display:none;">
+            </div>
+
+            <div id="audioList">
+                <!-- JS 动态生成 10 行 -->
+            </div>
+
+            <h3>低电量提醒</h3>
+            <div id="lowpwrList"></div>
+
+            <h3>离线提醒</h3>
+            <div id="offlineList"></div>
+
+            <h3>满电提醒</h3>
+            <div id="fullpwrList"></div>
+
+            <input type="file" id="pcmFileInput" accept=".mp3" style="display:none;">
+            <button id="saveAudioBtn" class="action-btn">保存音频备注</button>
+            <div id="uploadStatus" class="status"></div>
+        </div>
+    </div>
+
+    <!-- ==================== 内机配置 ==================== -->
+    <div id="tab-wifi" class="tab-content">
+        <div class="section">
+            <h2>内机配置</h2>
+            <div class="form-row">
+                <label>模式：</label>
+                <div class="mode-radio-group">
+                    <label>
+                        <input type="radio" name="wifiModeRadio" value="ap" checked>
+                        AP
+                    </label>
+                    <label>
+                        <input type="radio" name="wifiModeRadio" value="station">
+                        Station
+                    </label>
+                </div>
+            </div>
+
+            <div id="stationFields" style="display:none;">
+                <div class="form-row">
+                    <label for="wifiSsid">SSID：</label>
+                    <div class="ssid-row">
+                        <select id="wifiSsidSelect">
+                            <option value="">-- 点击扫描 --</option>
+                        </select>
+                        <button id="scanWifiBtn" type="button">扫描</button>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <label>手动输入：</label>
+                    <input type="text" id="wifiSsid" placeholder="或直接输入 SSID">
+                </div>
+                <div class="form-row">
+                    <label for="wifiPass">密码：</label>
+                    <input type="password" id="wifiPass" placeholder="WiFi 密码">
+                </div>
+
+                <div class="form-row">
+                    <label for="ipMode">IP模式：</label>
+                    <select id="ipMode">
+                        <option value="dhcp">DHCP（自动）</option>
+                        <option value="static">静态</option>
+                    </select>
+                </div>
+
+                <div id="staticIpFields" style="display:none;">
+                    <div class="form-row">
+                        <label for="ipAddr">IP：</label>
+                        <input type="text" id="ipAddr" placeholder="192.168.5.100">
+                    </div>
+                    <div class="form-row">
+                        <label for="netmask">掩码：</label>
+                        <input type="text" id="netmask" placeholder="255.255.255.0">
+                    </div>
+                    <div class="form-row">
+                        <label for="gateway">网关：</label>
+                        <input type="text" id="gateway" placeholder="192.168.5.1">
+                    </div>
+                    <div class="form-row">
+                        <label for="dns1">DNS主：</label>
+                        <input type="text" id="dns1" placeholder="8.8.8.8">
+                    </div>
+                    <div class="form-row">
+                        <label for="dns2">DNS备：</label>
+                        <input type="text" id="dns2" placeholder="114.114.114.114">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row" style="margin-top:15px;">
+                <label for="ntpServer">NTP服务器：</label>
+                <input type="text" id="ntpServer" placeholder="ntp.aliyun.com">
+            </div>
+
+            <div class="form-row">
+                <label for="volumeSlider">音量：</label>
+                <input type="range" id="volumeSlider" min="10" max="100" step="5" value="70" class="volume-slider">
+                <span id="volumeValue" style="width:50px;text-align:right;font-family:monospace;">70%</span>
+                <button id="volumeTestBtn" class="test-btn" style="margin-left:10px;">测试</button>
+            </div>
+
+            <div class="form-row">
+                <label style="width:auto;margin-right:6px;">
+                    <input type="checkbox" id="ledNormalOn" checked>
+                    正常时亮灯
+                </label>
+            </div>
+
+            <div class="form-row">
+                <label for="ledBrightnessSlider">指示灯亮度：</label>
+                <input type="range" id="ledBrightnessSlider" min="10" max="100" step="5" value="50" class="volume-slider">
+                <span id="ledBrightnessValue" style="width:50px;text-align:right;font-family:monospace;">50%</span>
+            </div>
+
+            <button id="saveWifiBtn" class="action-btn">保存配置</button>
+            <div class="form-row" style="margin-top:15px;">
+                <label>MAC：</label>
+                <span id="macAddr" style="font-family:monospace;">--:--:--:--:--:--</span>
+            </div>
+
+            <!-- 内机实际网络信息（仅 Station + DHCP 显示） -->
+            <div id="actualNetInfo" style="display:none;">
+                <div class="form-row">
+                    <label>内机IP地址：</label>
+                    <span id="actualIp" style="font-family:monospace;">--</span>
+                </div>
+                <div class="form-row">
+                    <label>内机掩码：</label>
+                    <span id="actualNetmask" style="font-family:monospace;">--</span>
+                </div>
+                <div class="form-row">
+                    <label>内机网关：</label>
+                    <span id="actualGateway" style="font-family:monospace;">--</span>
+                </div>
+                <div class="form-row">
+                    <label>内机DNS：</label>
+                    <span id="actualDns1" style="font-family:monospace;">--</span>
+                </div>
+                <div class="form-row">
+                    <label>内机DNS2：</label>
+                    <span id="actualDns2" style="font-family:monospace;">--</span>
+                </div>
+            </div>
+
+            <div id="wifiStatus" class="status"></div>
+        </div>
+    </div>
+
+    <!-- ==================== 更改密码 ==================== -->
+    <div id="tab-password" class="tab-content">
+        <div class="section">
+            <h2>更改密码</h2>
+
+            <div class="form-row">
+                <label for="newPassword">新密码：</label>
+                <input type="password" id="newPassword" placeholder="1~16 位英文/数字/符号" autocomplete="new-password">
+            </div>
+
+            <div class="form-row">
+                <label for="confirmPassword">确认密码：</label>
+                <input type="password" id="confirmPassword" placeholder="再次输入新密码" autocomplete="new-password">
+            </div>
+
+            <div class="form-row" style="font-size:13px;color:#888;">
+                仅允许英文大小写、数字、英文符号，不允许空格；长度 1~16。
+            </div>
+
+            <button id="savePasswordBtn" class="action-btn">保存密码</button>
+            <div id="passwordStatus" class="status"></div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById("logoutBtn").addEventListener("click", function () {
+            if (!confirm("确定退出登录？")) return;
+            fetch("/api/logout", { method: "POST" })
+                .then(function () { location.replace("login.html"); })
+                .catch(function () { location.replace("login.html"); });
+        });
+    </script>
+
+    <script type="module" src="/web-main.js"></script>
+</body>
+</html>

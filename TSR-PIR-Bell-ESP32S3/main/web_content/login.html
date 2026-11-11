@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TSR PIR Bell - 登录</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="logo-container">
+        <img src="/logo.png" alt="OSHWIR" class="logo">
+    </div>
+
+    <h1>TSR PIR Bell</h1>
+    <p class="subtitle">Open-Source Split PIR Doorbell by motozilog</p>
+
+    <!-- 外机状态（公开，登录前可看） -->
+    <div class="section login-status-section" style="margin-bottom:12px;">
+        <h2>外机状态</h2>
+        <div class="doorbell-status-row" id="publicDoorbellStatusRow" style="margin-bottom:0;">
+            <!-- JS 动态生成 4 个状态 -->
+        </div>
+    </div>
+
+    <div class="section login-section">
+        <h2>登录</h2>
+        <div class="form-row">
+            <label for="loginPass">密码：</label>
+            <input type="password" id="loginPass" placeholder="请输入密码" autocomplete="current-password">
+        </div>
+        <button id="loginBtn" class="action-btn">登录</button>
+        <div id="loginStatus" class="status"></div>
+    </div>
+
+    <script>
+        (function () {
+            var input  = document.getElementById("loginPass");
+            var btn    = document.getElementById("loginBtn");
+            var status = document.getElementById("loginStatus");
+            var statusRow = document.getElementById("publicDoorbellStatusRow");
+
+            var DB_STATE_TEXT = {
+                online:      "在线",
+                disabled:    "未启用",
+                low_battery: "低电量",
+                offline:     "离线"
+            };
+            var DB_STATE_CLASS = {
+                online:      "db-status-online",
+                disabled:    "db-status-disabled",
+                low_battery: "db-status-lowbatt",
+                offline:     "db-status-offline"
+            };
+
+            function showStatus(msg, isError) {
+                status.textContent = msg;
+                status.style.color = isError ? "red" : "green";
+            }
+
+            /* 刷新外机状态（公开接口，不需要登录） */
+            function refreshPublicStatus() {
+                fetch("/api/public_status", { method: "GET" })
+                    .then(function (resp) {
+                        if (!resp.ok) throw new Error("HTTP " + resp.status);
+                        return resp.json();
+                    })
+                    .then(function (data) {
+                        var list = data.status || [];
+                        statusRow.innerHTML = "";
+                        list.forEach(function (item) {
+                            var idx = item.idx;
+                            var state = item.state || "offline";
+
+                            var wrap = document.createElement("span");
+                            wrap.className = "db-status-item";
+                            wrap.appendChild(document.createTextNode("外机" + idx));
+
+                            var tag = document.createElement("span");
+                            tag.className = "db-status " + (DB_STATE_CLASS[state] || "db-status-offline");
+                            tag.textContent = DB_STATE_TEXT[state] || "离线";
+                            wrap.appendChild(tag);
+
+                            statusRow.appendChild(wrap);
+                        });
+                    })
+                    .catch(function (err) {
+                        console.warn("Load public status failed:", err);
+                        statusRow.innerHTML = '<span style="color:#888;">状态获取失败</span>';
+                    });
+            }
+
+            /* 进页面先探一下会话：已登录直接跳 index */
+            fetch("/api/auth_check", { method: "GET" })
+                .then(function (resp) {
+                    if (resp.ok) {
+                        location.replace("index.html");
+                    }
+                })
+                .catch(function () {});
+
+            /* 首次加载 + 每 60 秒刷新 */
+            refreshPublicStatus();
+            setInterval(refreshPublicStatus, 60000);
+
+            function tryLogin() {
+                var pass = input.value;
+                if (pass === "") {
+                    showStatus("请输入密码", true);
+                    return;
+                }
+                btn.disabled = true;
+                showStatus("登录中...", false);
+
+                fetch("/api/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ password: pass })
+                })
+                    .then(function (resp) {
+                        return resp.json().then(function (data) {
+                            return { ok: resp.ok, data: data };
+                        });
+                    })
+                    .then(function (r) {
+                        if (r.ok && r.data && r.data.ok) {
+                            showStatus("登录成功，正在进入...", false);
+                            setTimeout(function () {
+                                location.replace("index.html");
+                            }, 300);
+                        } else {
+                            showStatus("密码错误", true);
+                            input.value = "";
+                            input.focus();
+                            btn.disabled = false;
+                        }
+                    })
+                    .catch(function (err) {
+                        showStatus("登录失败：" + err.message, true);
+                        btn.disabled = false;
+                    });
+            }
+
+            btn.addEventListener("click", tryLogin);
+            input.addEventListener("keydown", function (e) {
+                if (e.key === "Enter") tryLogin();
+            });
+            input.focus();
+        })();
+    </script>
+</body>
+</html>

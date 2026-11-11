@@ -1,0 +1,1 @@
+esptool.py --chip esp32s3 merge_bin -o TSR-PIR-Bell-ESP32S3-V1.0-ForHW-V2.2_Full_Firmware.bin --flash_mode dio --flash_freq 80m --flash_size 8MB 0x0 build/bootloader/bootloader.bin 0x8000 build/partition_table/partition-table.bin 0x10000 build/TSR-PIR-Bell-ESP32S3.bin 0x410000 build/audio.bin

@@ -1,0 +1,583 @@
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f0f0f0;
+    margin: 0;
+    padding: 20px;
+}
+
+h1 {
+    text-align: center;
+    color: #333;
+    font-size: 22px;
+    margin-bottom: 15px;
+}
+
+.subtitle {
+    text-align: center;
+    color: #888;
+    font-size: 13px;
+    margin-top: -10px;
+    margin-bottom: 15px;
+    font-style: italic;
+}
+
+/* ---------- Logo ---------- */
+.logo-container {
+    text-align: center;
+    margin-top: 10px;
+    margin-bottom: 5px;
+}
+
+.logo {
+    object-fit: contain;
+}
+
+/* ---------- Tab 导航 ---------- */
+.tabs {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.tab-btn {
+    font-size: 16px;
+    padding: 10px 30px;
+    background-color: #e0e0e0;
+    color: #333;
+    border: none;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+}
+
+.tab-btn:hover {
+    background-color: #d0d0d0;
+}
+
+.tab-btn.active {
+    background-color: #2196F3;
+    color: white;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* ---------- 卡片 ---------- */
+.section {
+    background: white;
+    border-radius: 12px;
+    padding: 20px 30px;
+    margin: 0 auto;
+    max-width: 900px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.section h2 {
+    color: #333;
+    font-size: 20px;
+    margin-top: 0;
+}
+
+.section h3 {
+    font-size: 16px;
+    color: #333;
+    margin: 18px 0 8px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 4px;
+}
+
+/* ---------- 通用表单 ---------- */
+.form-row {
+    display: flex;
+    align-items: center;
+    margin: 10px 0;
+}
+
+.form-row label {
+    width: 100px;
+    color: #555;
+}
+
+.form-row input,
+.form-row select {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+/* 排除滑动条，防止被上面的 input 默认样式污染 */
+.form-row input.volume-slider {
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+}
+
+/* ---------- 按钮 ---------- */
+.action-btn {
+    font-size: 16px;
+    padding: 10px 30px;
+    margin-top: 10px;
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.action-btn:hover {
+    background-color: #1976D2;
+}
+
+.status {
+    margin-top: 10px;
+    font-size: 14px;
+    min-height: 20px;
+}
+
+/* ---------- SSID 行 ---------- */
+.ssid-row {
+    display: flex;
+    flex: 1;
+    gap: 8px;
+}
+
+.ssid-row select {
+    flex: 1;
+}
+
+.ssid-row button {
+    padding: 8px 16px;
+    background-color: #FF9800;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.ssid-row button:hover {
+    background-color: #F57C00;
+}
+
+.ssid-row button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+/* ---------- WiFi 模式单选 ---------- */
+.mode-radio-group {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+}
+
+.mode-radio-group label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    width: auto;
+}
+
+/* ---------- 外机设置 ---------- */
+.doorbell-block {
+    padding: 12px 0;
+    border-bottom: 2px solid #ddd;
+}
+
+.doorbell-block:last-child {
+    border-bottom: none;
+}
+
+.doorbell-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.doorbell-label {
+    font-weight: bold;
+    font-size: 15px;
+    color: #333;
+    min-width: 55px;
+}
+
+.doorbell-mode-row {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 6px 12px 6px 20px;
+    border-radius: 8px;
+    transition: background-color 0.15s;
+}
+
+.doorbell-mode-row.selected {
+    background-color: #2196F3;
+    color: white;
+}
+
+.doorbell-mode-row.selected .audio-select-group {
+    color: white;
+}
+
+.doorbell-mode-row.selected select {
+    background-color: white;
+    color: #333;
+}
+
+.mode-radio-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background-color: #f5f5f5;
+    width: 70px;
+    justify-content: center;
+    color: #333;
+}
+
+.doorbell-mode-row.selected .mode-radio-label {
+    background-color: rgba(255, 255, 255, 0.25);
+    color: white;
+}
+
+.mode-radio-label input[type="radio"] {
+    margin: 0;
+}
+
+.audio-select-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+}
+
+.audio-select-group select {
+    padding: 4px 8px;
+    font-size: 13px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    min-width: 110px;
+}
+
+.test-btn {
+    padding: 5px 12px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.test-btn:hover {
+    background-color: #45a049;
+}
+
+/* ---------- 外机状态汇总 ---------- */
+.doorbell-status-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    background: #f7f9fc;
+    border: 1px solid #dde3ea;
+    border-radius: 8px;
+    font-size: 14px;
+    color: #333;
+}
+
+.db-status-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.db-status {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+    line-height: 18px;
+}
+
+.db-status-online   { background-color: #4CAF50; }
+.db-status-disabled { background-color: #9e9e9e; }
+.db-status-lowbatt  { background-color: #FF9800; }
+.db-status-offline  { background-color: #e53935; }
+
+/* ---------- 启用开关（圆点滑动） ---------- */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.switch-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: background-color 0.2s;
+    border-radius: 22px;
+}
+
+.switch-slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: transform 0.2s;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.switch input:checked + .switch-slider {
+    background-color: #2196F3;
+}
+
+.switch input:checked + .switch-slider:before {
+    transform: translateX(18px);
+}
+
+/* ---------- 音频设置 ---------- */
+.audio-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.audio-row:last-child {
+    border-bottom: none;
+}
+
+.play-btn {
+    font-size: 14px;
+    padding: 8px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    min-width: 90px;
+    color: white;
+    background-color: #9C27B0;
+}
+
+.play-btn:hover {
+    background-color: #7B1FA2;
+}
+
+.play-btn.missing {
+    background-color: #bdbdbd;
+    cursor: not-allowed;
+}
+
+.play-btn.missing:hover {
+    background-color: #bdbdbd;
+}
+
+.audio-action-btn {
+    font-size: 13px;
+    padding: 8px 14px;
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.audio-action-btn:hover {
+    background-color: #1976D2;
+}
+
+.note-input {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+/* ---------- 开机音频 ---------- */
+.boot-audio-block {
+    background: #f7f9fc;
+    border: 1px solid #dde3ea;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 15px;
+}
+.boot-audio-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.boot-audio-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    color: #555;
+    cursor: pointer;
+}
+
+/* ---------- 音量/亮度拖动条 ---------- */
+.volume-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 20px; /* 给圆点留出空间 */
+    background: transparent;
+    outline: none;
+    margin: 0 10px;
+    padding: 0;
+    border: none;
+    position: relative;
+    cursor: pointer;
+    z-index: 1;
+}
+
+/* 灰色底轨 */
+.volume-slider::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 8px;
+    transform: translateY(-50%);
+    border-radius: 4px;
+    background-color: #d0d0d0;
+    z-index: -1;
+}
+
+/* 蓝色进度轨 */
+.volume-slider::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    height: 8px;
+    width: var(--vol-pct, 50%);
+    transform: translateY(-50%);
+    border-radius: 4px;
+    background-color: #2196F3;
+    z-index: -1;
+    pointer-events: none;
+}
+
+/* WebKit (Chrome, Edge, Safari) */
+.volume-slider::-webkit-slider-runnable-track {
+    height: 8px;
+    background: transparent;
+    border: none;
+}
+
+.volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #2196F3;
+    border: 2px solid white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    cursor: pointer;
+    box-sizing: border-box;
+    position: relative;
+    z-index: 2;
+    
+    /* 关键点：强制让 20px 的圆点居中对齐 8px 的轨道 */
+    /* (8 - 20) / 2 = -6px */
+    margin-top: -6px;
+}
+
+/* Firefox */
+.volume-slider::-moz-range-track {
+    height: 8px;
+    background: transparent;
+    border: none;
+}
+
+.volume-slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #2196F3;
+    border: 2px solid white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    cursor: pointer;
+    box-sizing: border-box;
+    position: relative;
+    z-index: 2;
+}
+
+/* ---------- 外机 header 提醒开关标签 ---------- */
+.alert-switch-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: #555;
+    cursor: pointer;
+}
+
+/* ---------- 登录页宽度限制 ---------- */
+.login-section {
+    max-width: 420px;
+}
+
+.login-status-section {
+    max-width: 900px; /* 和 index 内的 .section 一样宽 */
+}
+
+/* ---------- 退出按钮 ---------- */
+.logout-btn {
+    position: fixed;
+    top: 12px;
+    right: 16px;
+    z-index: 1000;
+    font-size: 14px;
+    padding: 6px 16px;
+    background-color: #e53935;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.logout-btn:hover {
+    background-color: #c62828;
+}

@@ -1,0 +1,115 @@
+dependencies:
+  esphome/micro-decoder:
+    component_hash: 003c9bc4b2350f4f06a7b1e8560ea5ae8758ecba91e58a521b40cd8be2f4f119
+    dependencies:
+    - name: esphome/micro-flac
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: $CONFIG{MICRO_DECODER_CODEC_FLAC} == True
+      version: '>=0.1.1'
+    - name: esphome/micro-mp3
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: $CONFIG{MICRO_DECODER_CODEC_MP3} == True
+      version: '>=0.2.0'
+    - name: esphome/micro-opus
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: $CONFIG{MICRO_DECODER_CODEC_OPUS} == True
+      version: '>=0.3.5'
+    - name: esphome/micro-vorbis
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: $CONFIG{MICRO_DECODER_CODEC_VORBIS} == True
+      version: '>=0.1.0'
+    - name: esphome/micro-wav
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: $CONFIG{MICRO_DECODER_CODEC_WAV} == True
+      version: '>=0.1.0'
+    - name: idf
+      require: private
+      version: '>=5.5'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.4.0
+  esphome/micro-mp3:
+    component_hash: 51106d6a6ef13d37b598aa06b4a4de39249319110f990950eb123203a9e2eb6d
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.4.0
+  esphome/micro-wav:
+    component_hash: e06aa5757ed7477baee030ee56f2eb479b5a39b2de3759d7dac17bdd47502d70
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.2.0
+  espressif/es8311:
+    component_hash: 46b3117250344bb03f143d5e2becf81cfb111679fbd7b95cefc2d302d36cc393
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4,<6.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.0~1
+  espressif/esp_codec_dev:
+    component_hash: 420a8a931f8bdfc74ae89c4d2ce634823d10e1865b1e9bdb8428bfe4a1060def
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.3.6
+  espressif/led_strip:
+    component_hash: 28c6509a727ef74925b372ed404772aeedf11cce10b78c3f69b3c66799095e2d
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.5.5
+  idf:
+    source:
+      type: idf
+    version: 5.5.5
+  joltwallet/littlefs:
+    component_hash: 3af20a3d75c49db9dc2286fd50862c34055c9f578419ad1f2bf7ed3ed01391fe
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.22.3
+direct_dependencies:
+- esphome/micro-decoder
+- espressif/es8311
+- espressif/esp_codec_dev
+- espressif/led_strip
+- idf
+- joltwallet/littlefs
+manifest_hash: 7a11e804578d3f926a0a416e61d8b1edf2bf5f0bf5100bcbbb13904572eaa931
+target: esp32s3
+version: 2.0.0
