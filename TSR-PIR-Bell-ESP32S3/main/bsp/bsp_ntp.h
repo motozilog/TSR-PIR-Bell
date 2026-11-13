@@ -27,6 +27,17 @@ time_t NtpGetTime(void);
 /* 用指定服务器测试能否同步（会短暂切换 SNTP 服务器，失败恢复原服务器） */
 esp_err_t NtpTestServer(const char *server, uint32_t timeout_ms);
 
+/* 运行时切换 NTP 服务器（保持切换，不恢复原值）。
+ * 内部会停 SNTP → 用新 server 重启 → 更新 s_current_server。
+ * server 为空或非法返回 ESP_ERR_INVALID_ARG。 */
+esp_err_t NtpSetServer(const char *server);
+
+/* 一次性同步测试：停 SNTP → 用 server 启动 → 轮询等同步。
+ * 成功：更新 s_current_server，返回 ESP_OK。
+ * 失败：返回 ESP_ERR_TIMEOUT，不恢复原服务器（由调用方决定后续）。
+ * 用于网络配置保存前试连场景。 */
+esp_err_t NtpSyncOnce(const char *server, uint32_t timeout_ms);
+
 #ifdef __cplusplus
 }
 #endif

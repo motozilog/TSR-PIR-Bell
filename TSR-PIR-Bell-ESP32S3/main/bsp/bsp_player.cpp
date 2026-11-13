@@ -1,22 +1,28 @@
+/**
+ * @file bsp_player.cpp
+ * @brief 播放器外壳：队列 / 播放任务 / 对外接口 / 分派 / 同步异步校验
+ *
+ * PCM 与 MP3 具体播放实现分别在：
+ *   bsp_player_pcm.cpp  PlayerPlayPcmInternal
+ *   bsp_player_mp3.cpp  PlayerPlayMp3Internal
+ */
 #include "bsp_player.h"
+#include "bsp_player_internal.h"
 #include "bsp_littlefs.h"
 #include "bsp_es8311.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include "micro_decoder/decoder_source.h"
-#include "micro_decoder/types.h"
 
 static const char *TAG = "BSP_PLAYER";
 
-#define PLAYER_CHUNK_SIZE      4096
-
-/* 单声道补双声道用的临时缓冲，放文件级避免占 player_task 栈 */
-static uint8_t s_stereo_buf[4096];
+/* 异步校验任务栈大小（覆盖解码器 + I2S 写链峰值） */
+#define PLAYER_SYNC_TASK_STACK 12288
 
 /* ===== 队列元素 ===== */
 typedef struct {
@@ -33,6 +39,9 @@ static bool              s_ready     = false;
 static char          s_current_file[PLAYER_FILENAME_MAX];
 static PlayerOwner_t s_current_owner = PLAYER_OWNER_NONE;
 static volatile bool s_playing       = false;
+
+/* 批量入队模式：Begin 后 PlayerTryPlay 不 give 信号量，End 时统一唤醒 */
+static volatile bool     s_batch_mode = false;
 
 /* 待播队列（独立于 Chirp 报文 FIFO） */
 static PlayerQueueItem_t s_queue[PLAYER_QUEUE_DEPTH];
@@ -57,7 +66,6 @@ static void PlayerQueuePushTail(const char *filename, PlayerOwner_t owner,
                                 uint16_t src, uint8_t is_key)
 {
     if (s_q_count >= PLAYER_QUEUE_DEPTH) {
-        /* 丢队尾最后一个 */
         ESP_LOGW(TAG, "queue full, drop tail: %s (owner=%d)",
                  s_queue[(s_q_tail + PLAYER_QUEUE_DEPTH - 1) % PLAYER_QUEUE_DEPTH].filename,
                  s_queue[(s_q_tail + PLAYER_QUEUE_DEPTH - 1) % PLAYER_QUEUE_DEPTH].owner);
@@ -74,7 +82,7 @@ static void PlayerQueuePushTail(const char *filename, PlayerOwner_t owner,
     s_q_count++;
 }
 
-/* 队头插入（CHIRP 高优先级） */
+/* 队头插入（CONFIG 最高优先级用，保证同批 CONFIG 连续排在最前） */
 static void PlayerQueuePushHead(const char *filename, PlayerOwner_t owner,
                                 uint16_t src, uint8_t is_key)
 {
@@ -93,19 +101,60 @@ static void PlayerQueuePushHead(const char *filename, PlayerOwner_t owner,
     s_q_count++;
 }
 
-/* 插入到第一个 KEY 之前（WEB 插在 KEY 之前、CHIRP 之后） */
-static void PlayerQueuePushBeforeKey(const char *filename, PlayerOwner_t owner,
-                                     uint16_t src, uint8_t is_key)
+/* 在"跳过前 N 个元素"的位置插入（N 由调用方算好） */
+static void PlayerQueueInsertAt(int rel_pos, const char *filename,
+                                PlayerOwner_t owner, uint16_t src, uint8_t is_key)
 {
+    if (rel_pos < 0) rel_pos = 0;
+    if (rel_pos > s_q_count) rel_pos = s_q_count;
+
     if (s_q_count >= PLAYER_QUEUE_DEPTH) {
         ESP_LOGW(TAG, "queue full, drop tail");
         s_q_tail = (s_q_tail + PLAYER_QUEUE_DEPTH - 1) % PLAYER_QUEUE_DEPTH;
         s_q_count--;
+        if (rel_pos > s_q_count) rel_pos = s_q_count;
     }
 
-    /* 找第一个 KEY 的位置 */
-    int insert_pos = -1;
+    /* 从队尾往 rel_pos 方向整体后移一位 */
+    for (int i = s_q_count; i > rel_pos; i--) {
+        int dst = (s_q_head + i) % PLAYER_QUEUE_DEPTH;
+        int src_idx = (s_q_head + i - 1) % PLAYER_QUEUE_DEPTH;
+        s_queue[dst] = s_queue[src_idx];
+    }
+    int pos = (s_q_head + rel_pos) % PLAYER_QUEUE_DEPTH;
+    PlayerQueueItem_t *it = &s_queue[pos];
+    strncpy(it->filename, filename, sizeof(it->filename) - 1);
+    it->filename[sizeof(it->filename) - 1] = '\0';
+    it->owner  = owner;
+    it->src    = src;
+    it->is_key = is_key;
+    s_q_tail = (s_q_tail + 1) % PLAYER_QUEUE_DEPTH;
+    s_q_count++;
+}
+
+/* 计算"跳过所有 CONFIG 元素"后的相对下标：返回前导 CONFIG 段之后的位置 */
+static int PlayerQueueConfigEndPos(void)
+{
+    int n = 0;
     for (int i = 0; i < s_q_count; i++) {
+        int idx = (s_q_head + i) % PLAYER_QUEUE_DEPTH;
+        if (s_queue[idx].owner == PLAYER_OWNER_CONFIG) {
+            n = i + 1;
+        } else {
+            break;  /* CONFIG 段连续在最前，遇到第一个非 CONFIG 即停 */
+        }
+    }
+    return n;
+}
+
+/* 插入到第一个 KEY 之前（WEB 用），但必须在 CONFIG 段之后 */
+static void PlayerQueuePushBeforeKey(const char *filename, PlayerOwner_t owner,
+                                     uint16_t src, uint8_t is_key)
+{
+    int base = PlayerQueueConfigEndPos();
+
+    int insert_pos = -1;
+    for (int i = base; i < s_q_count; i++) {
         int idx = (s_q_head + i) % PLAYER_QUEUE_DEPTH;
         if (s_queue[idx].owner == PLAYER_OWNER_KEY) {
             insert_pos = i;
@@ -117,22 +166,15 @@ static void PlayerQueuePushBeforeKey(const char *filename, PlayerOwner_t owner,
         PlayerQueuePushTail(filename, owner, src, is_key);
         return;
     }
+    PlayerQueueInsertAt(insert_pos, filename, owner, src, is_key);
+}
 
-    /* 从 insert_pos 开始整体后移一位 */
-    for (int i = s_q_count; i > insert_pos; i--) {
-        int dst = (s_q_head + i) % PLAYER_QUEUE_DEPTH;
-        int src_idx = (s_q_head + i - 1) % PLAYER_QUEUE_DEPTH;
-        s_queue[dst] = s_queue[src_idx];
-    }
-    int pos = (s_q_head + insert_pos) % PLAYER_QUEUE_DEPTH;
-    PlayerQueueItem_t *it = &s_queue[pos];
-    strncpy(it->filename, filename, sizeof(it->filename) - 1);
-    it->filename[sizeof(it->filename) - 1] = '\0';
-    it->owner  = owner;
-    it->src    = src;
-    it->is_key = is_key;
-    s_q_tail = (s_q_tail + 1) % PLAYER_QUEUE_DEPTH;
-    s_q_count++;
+/* CHIRP 用：插到 CONFIG 段之后、其它元素之前 */
+static void PlayerQueuePushAfterConfig(const char *filename, PlayerOwner_t owner,
+                                       uint16_t src, uint8_t is_key)
+{
+    int pos = PlayerQueueConfigEndPos();
+    PlayerQueueInsertAt(pos, filename, owner, src, is_key);
 }
 
 static bool PlayerQueuePop(PlayerQueueItem_t *out)
@@ -174,258 +216,19 @@ static bool HasExt(const char *path, const char *ext)
     return true;
 }
 
-/* ===== PCM 直读播放 ===== */
-static esp_err_t PlayerPlayPcm(const char *path)
-{
-    FILE *fd = fopen(path, "rb");
-    if (fd == NULL) {
-        ESP_LOGE(TAG, "Failed to open %s", path);
-        return ESP_FAIL;
-    }
-
-    uint8_t *chunk = (uint8_t *)malloc(PLAYER_CHUNK_SIZE);
-    if (chunk == NULL) {
-        ESP_LOGE(TAG, "malloc %d failed", PLAYER_CHUNK_SIZE);
-        fclose(fd);
-        return ESP_FAIL;
-    }
-
-    size_t total_read = 0;
-    size_t n;
-    while ((n = fread(chunk, 1, PLAYER_CHUNK_SIZE, fd)) > 0) {
-        if (Es8311PlayPcm(chunk, n) != ESP_OK) {
-            ESP_LOGE(TAG, "Play chunk failed");
-            free(chunk);
-            fclose(fd);
-            return ESP_FAIL;
-        }
-        total_read += n;
-    }
-
-    free(chunk);
-    fclose(fd);
-    ESP_LOGI(TAG, "[player] %s played %u bytes", path, (unsigned)total_read);
-    return ESP_OK;
-}
-
-/* ===== MP3 解码播放（整块读 + play_buffer） ===== */
-struct Mp3Sink : micro_decoder::DecoderListener {
-    uint8_t  channels = 0;
-    uint8_t  bits = 16;
-    volatile bool write_failed = false;
-
-    size_t on_audio_write(const uint8_t *data, size_t length, uint32_t timeout_ms) override {
-        if (channels == 1) {
-            /* 16bit 单声道 -> 双声道，分块处理 */
-            const int16_t *in = (const int16_t *)data;
-            size_t frames = length / 2;
-            size_t done = 0;
-            while (done < frames) {
-                size_t n = frames - done;
-                if (n > sizeof(s_stereo_buf) / 4) n = sizeof(s_stereo_buf) / 4;
-                int16_t *out = (int16_t *)s_stereo_buf;
-                for (size_t i = 0; i < n; i++) {
-                    int16_t s = in[done + i];
-                    out[i * 2]     = s;
-                    out[i * 2 + 1] = s;
-                }
-                esp_err_t err = Es8311PlayPcm(s_stereo_buf, n * 4);
-                if (err != ESP_OK) {
-                    ESP_LOGE(TAG, "[mp3] Es8311PlayPcm failed: %s", esp_err_to_name(err));
-                    write_failed = true;
-                    return 0;
-                }
-                done += n;
-            }
-            return length;
-        }
-
-        esp_err_t err = Es8311PlayPcm(data, length);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "[mp3] Es8311PlayPcm failed: %s", esp_err_to_name(err));
-            write_failed = true;
-            return 0;
-        }
-        return length;
-    }
-
-    void on_stream_info(const micro_decoder::AudioStreamInfo &info) override {
-        channels = info.get_channels();
-        bits = info.get_bits_per_sample();
-        ESP_LOGI(TAG, "[mp3] stream: %lu Hz, %u ch, %u bit",
-                 (unsigned long)info.get_sample_rate(),
-                 (unsigned)channels, (unsigned)bits);
-    }
-
-    void on_state_change(micro_decoder::DecoderState state) override {
-        if (state == micro_decoder::DecoderState::FAILED) {
-            ESP_LOGE(TAG, "[mp3] state -> FAILED");
-        }
-    }
-};
-
-/* 探测 MP3 文件头：跳过 ID3v2，找帧同步，解析采样率与声道
- * 成功返回 true 并填 rate/channels；失败返回 false
- */
-static bool ProbeMp3Params(FILE *fd, uint32_t *rate, uint8_t *channels)
-{
-    static const uint32_t mp3_rates[3][3] = {
-        {44100, 48000, 32000},   /* MPEG1 */
-        {22050, 24000, 16000},   /* MPEG2 */
-        {11025, 12000,  8000},   /* MPEG2.5 */
-    };
-
-    fseek(fd, 0, SEEK_SET);
-
-    /* 跳过 ID3v2 */
-    uint8_t hdr[10];
-    if (fread(hdr, 1, 10, fd) == 10 &&
-        hdr[0]=='I' && hdr[1]=='D' && hdr[2]=='3') {
-        uint32_t tag_size = ((uint32_t)(hdr[6]&0x7F) << 21) |
-                            ((uint32_t)(hdr[7]&0x7F) << 14) |
-                            ((uint32_t)(hdr[8]&0x7F) << 7)  |
-                            ((uint32_t)(hdr[9]&0x7F));
-        fseek(fd, (long)(tag_size + 10), SEEK_SET);
-    } else {
-        fseek(fd, 0, SEEK_SET);
-    }
-
-    /* 找帧同步 0xFF 0xEx，最多找 4KB */
-    uint8_t b[4];
-    for (int i = 0; i < 4096; i++) {
-        if (fread(b, 1, 4, fd) != 4) return false;
-        if (b[0] == 0xFF && (b[1] & 0xE0) == 0xE0) {
-            uint8_t ver   = (b[1] >> 3) & 0x03;  /* 3=MPEG1 2=MPEG2 0=MPEG2.5 */
-            uint8_t srIdx = (b[2] >> 2) & 0x03;
-            uint8_t chMd  = (b[3] >> 6) & 0x03;  /* 3=单声道，其它=立体声/联合 */
-
-            if (ver == 1 || srIdx == 3) return false; /* reserved */
-
-            uint8_t ver_row = (ver == 3) ? 0 : ((ver == 2) ? 1 : 2);
-            *rate = mp3_rates[ver_row][srIdx];
-            *channels = (chMd == 3) ? 1 : 2;
-            fseek(fd, 0, SEEK_SET);
-            return true;
-        }
-        fseek(fd, -3, SEEK_CUR);  /* 逐字节滑动 */
-    }
-    return false;
-}
-
-static esp_err_t PlayerPlayMp3(const char *path)
-{
-    FILE *fd = fopen(path, "rb");
-    if (fd == NULL) {
-        ESP_LOGE(TAG, "Failed to open %s", path);
-        return ESP_FAIL;
-    }
-
-    fseek(fd, 0, SEEK_END);
-    long sz = ftell(fd);
-    fseek(fd, 0, SEEK_SET);
-    if (sz <= 0 || sz > PLAYER_MP3_MAX_SIZE) {
-        ESP_LOGE(TAG, "MP3 size %ld out of range (max %d)", sz, PLAYER_MP3_MAX_SIZE);
-        fclose(fd);
-        return ESP_FAIL;
-    }
-
-    /* 探测 MP3 参数并配置 codec；失败或超范围回退默认 44.1k/16/2 */
-    uint32_t rate = ES8311_SAMPLE_RATE;
-    uint8_t  ch   = ES8311_DEFAULT_CHANNELS;
-    if (ProbeMp3Params(fd, &rate, &ch)) {
-        if (rate < 8000 || rate > 96000) {
-            ESP_LOGW(TAG, "[mp3] rate %lu out of range, fallback 44.1k",
-                     (unsigned long)rate);
-            rate = 44100;
-            ch   = 2;
-        }
-        if (Es8311PlayConfigure(rate, ch, 16) != ESP_OK) {
-            ESP_LOGW(TAG, "[mp3] configure(%lu,%u) failed, fallback 44.1k/2",
-                     (unsigned long)rate, ch);
-            Es8311PlayConfigure(44100, 2, 16);
-            rate = 44100;
-            ch   = 2;
-        }
-        ESP_LOGI(TAG, "[mp3] file params: %lu Hz, %u ch",
-                 (unsigned long)rate, ch);
-    } else {
-        ESP_LOGW(TAG, "[mp3] invalid header, fallback 44.1k/2 (file may be bad)");
-        Es8311PlayConfigure(44100, 2, 16);
-        rate = 44100;
-        ch   = 2;
-    }
-
-    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
-    if (buf == NULL) {
-        ESP_LOGE(TAG, "malloc %ld failed", sz);
-        fclose(fd);
-        return ESP_FAIL;
-    }
-
-    size_t rd = fread(buf, 1, (size_t)sz, fd);
-    fclose(fd);
-    if (rd != (size_t)sz) {
-        ESP_LOGE(TAG, "read %u/%ld failed", (unsigned)rd, sz);
-        free(buf);
-        return ESP_FAIL;
-    }
-
-    micro_decoder::DecoderConfig cfg;
-    cfg.ring_buffer_size       = 16 * 1024;
-    cfg.transfer_buffer_size   = 8 * 1024;
-    cfg.decoder_stack_in_psram = false;
-
-    Mp3Sink sink;
-    micro_decoder::DecoderSource decoder(cfg);
-    decoder.set_listener(&sink);
-
-    if (!decoder.play_buffer(buf, (size_t)sz, micro_decoder::AudioFileType::MP3)) {
-        ESP_LOGE(TAG, "play_buffer failed");
-        free(buf);
-        return ESP_FAIL;
-    }
-
-    const TickType_t stage1_timeout = pdMS_TO_TICKS(2000);
-    TickType_t start = xTaskGetTickCount();
-    while (decoder.state() != micro_decoder::DecoderState::PLAYING) {
-        if (decoder.state() == micro_decoder::DecoderState::FAILED) break;
-        decoder.loop();
-        vTaskDelay(pdMS_TO_TICKS(10));
-        if ((xTaskGetTickCount() - start) > stage1_timeout) {
-            ESP_LOGW(TAG, "[mp3] timeout waiting PLAYING");
-            break;
-        }
-    }
-
-    while (decoder.state() == micro_decoder::DecoderState::PLAYING) {
-        decoder.loop();
-        vTaskDelay(pdMS_TO_TICKS(10));
-        if (decoder.state() == micro_decoder::DecoderState::FAILED) break;
-    }
-
-    ESP_LOGI(TAG, "[mp3] %s done, state=%d", path, (int)decoder.state());
-    free(buf);
-
-    if (sink.write_failed) {
-        ESP_LOGE(TAG, "[mp3] write failed during playback");
-        return ESP_FAIL;
-    }
-    return ESP_OK;
-}
-
-/* ===== 按扩展名分派 ===== */
+/* ===== 按扩展名分派到 PCM / MP3 实现 ===== */
 static esp_err_t PlayerPlayOnce(const char *filename)
 {
     char path[160];
     snprintf(path, sizeof(path), "%s%s", LITTLEFS_MOUNT_POINT, filename);
 
     if (HasExt(path, ".mp3")) {
-        return PlayerPlayMp3(path);
+        return PlayerPlayMp3Internal(path);
     }
-    return PlayerPlayPcm(path);
+    return PlayerPlayPcmInternal(path);
 }
 
-/* ===== 同步播放（Web 上传校验用） ===== */
+/* ===== 同步播放（在调用者任务栈上跑，仅供非 httpd 场景） ===== */
 extern "C" esp_err_t PlayerPlayFileSync(const char *filename)
 {
     if (!s_ready || filename == NULL || filename[0] == '\0') {
@@ -433,6 +236,70 @@ extern "C" esp_err_t PlayerPlayFileSync(const char *filename)
     }
     esp_err_t ret = PlayerPlayOnce(filename);
     ESP_LOGI(TAG, "[sync] %s -> %s", filename, esp_err_to_name(ret));
+    return ret;
+}
+
+/* ===== 异步校验播放（内部一次性任务，调用者阻塞等结果） ===== */
+typedef struct {
+    const char         *filename;   /* 指向调用者栈上缓冲，任务运行期间有效 */
+    SemaphoreHandle_t   done;
+    volatile esp_err_t  ret;
+} SyncPlayCtx_t;
+
+static void PlayerSyncPlayTask(void *arg)
+{
+    SyncPlayCtx_t *ctx = (SyncPlayCtx_t *)arg;
+
+    esp_err_t ret = ESP_FAIL;
+    if (s_ready && ctx->filename != NULL && ctx->filename[0] != '\0') {
+        ret = PlayerPlayOnce(ctx->filename);
+    } else {
+        ret = ESP_ERR_INVALID_STATE;
+    }
+    ctx->ret = ret;
+
+    xSemaphoreGive(ctx->done);
+    vTaskDelete(NULL);
+}
+
+extern "C" esp_err_t PlayerPlayFileSyncEx(const char *filename, uint32_t timeout_ms)
+{
+    if (filename == NULL || filename[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_ready) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    SyncPlayCtx_t ctx;
+    ctx.filename = filename;
+    ctx.ret      = ESP_FAIL;
+    ctx.done     = xSemaphoreCreateBinary();
+    if (ctx.done == NULL) {
+        ESP_LOGE(TAG, "[sync_ex] create semaphore failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    BaseType_t ok = xTaskCreate(PlayerSyncPlayTask, "sync_play",
+                                PLAYER_SYNC_TASK_STACK, &ctx, 5, NULL);
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG, "[sync_ex] create task failed");
+        vSemaphoreDelete(ctx.done);
+        return ESP_FAIL;
+    }
+
+    TickType_t ticks = (timeout_ms == 0) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
+    if (xSemaphoreTake(ctx.done, ticks) != pdTRUE) {
+        ESP_LOGW(TAG, "[sync_ex] %s timeout (%u ms)", filename, (unsigned)timeout_ms);
+        /* 超时极罕见（30s 覆盖 200KB/24kHz ≈ 20s）；任务可能还在跑，
+         * ctx 在栈上已失效，记录并返回。 */
+        vSemaphoreDelete(ctx.done);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    esp_err_t ret = ctx.ret;
+    vSemaphoreDelete(ctx.done);
+    ESP_LOGI(TAG, "[sync_ex] %s -> %s", filename, esp_err_to_name(ret));
     return ret;
 }
 
@@ -481,13 +348,11 @@ static void PlayerTask(void *args)
             ESP_LOGE(TAG, "[player] play failed");
         }
 
-        /* 关闭 PA */
         Es8311PaOff();
 
         s_playing = false;
         s_current_owner = PLAYER_OWNER_NONE;
 
-        /* 队列里还有东西，自己 give 一次信号量继续播 */
         xSemaphoreTake(s_q_lock, portMAX_DELAY);
         bool more = (PlayerQueueCount() > 0);
         xSemaphoreGive(s_q_lock);
@@ -540,7 +405,6 @@ extern "C" void PlayerTrigger(const char *filename)
     xSemaphoreTake(s_q_lock, portMAX_DELAY);
     const char *name = (filename != NULL && filename[0] != '\0')
                        ? filename : PLAYER_DEFAULT_FILE;
-    /* 无条件插到队头 */
     PlayerQueuePushHead(name, PLAYER_OWNER_CHIRP, 0, 0);
     xSemaphoreGive(s_q_lock);
 
@@ -557,7 +421,6 @@ extern "C" bool PlayerTryPlay(const char *filename, PlayerOwner_t owner,
 
     xSemaphoreTake(s_q_lock, portMAX_DELAY);
 
-    /* CHIRP 去重：队列里已有相同 (src, is_key) 就不重复入队 */
     if (owner == PLAYER_OWNER_CHIRP) {
         if (PlayerQueueHasChirp(src, is_key)) {
             xSemaphoreGive(s_q_lock);
@@ -570,12 +433,14 @@ extern "C" bool PlayerTryPlay(const char *filename, PlayerOwner_t owner,
     bool idle = (!s_playing && PlayerQueueCount() == 0);
 
     if (idle) {
-        /* 直接放到队头并唤醒 */
         PlayerQueuePushHead(name, owner, src, is_key);
     } else {
         switch (owner) {
-            case PLAYER_OWNER_CHIRP:
+            case PLAYER_OWNER_CONFIG:
                 PlayerQueuePushHead(name, owner, src, is_key);
+                break;
+            case PLAYER_OWNER_CHIRP:
+                PlayerQueuePushAfterConfig(name, owner, src, is_key);
                 break;
             case PLAYER_OWNER_WEB:
                 PlayerQueuePushBeforeKey(name, owner, src, is_key);
@@ -588,14 +453,44 @@ extern "C" bool PlayerTryPlay(const char *filename, PlayerOwner_t owner,
     }
 
     xSemaphoreGive(s_q_lock);
-    xSemaphoreGive(s_play_sem);
 
-    ESP_LOGI(TAG, "[queue] enqueue %s (owner=%d, src=0x%04X, key=%u, idle=%d)",
-             name, (int)owner, src, is_key, (int)idle);
+    if (!s_batch_mode) {
+        xSemaphoreGive(s_play_sem);
+    }
+
+    ESP_LOGI(TAG, "[queue] enqueue %s (owner=%d, src=0x%04X, key=%u, idle=%d, batch=%d)",
+             name, (int)owner, src, is_key, (int)idle, (int)s_batch_mode);
     return true;
 }
 
 extern "C" bool PlayerIsReady(void)
 {
     return s_ready;
+}
+
+extern "C" bool PlayerIsPlaying(void)
+{
+    return s_playing;
+}
+
+extern "C" void PlayerBatchBegin(void)
+{
+    if (s_q_lock == NULL) return;
+    xSemaphoreTake(s_q_lock, portMAX_DELAY);
+    s_batch_mode = true;
+    xSemaphoreGive(s_q_lock);
+    ESP_LOGI(TAG, "batch begin");
+}
+
+extern "C" void PlayerBatchEnd(void)
+{
+    if (s_q_lock == NULL || s_play_sem == NULL) return;
+    xSemaphoreTake(s_q_lock, portMAX_DELAY);
+    s_batch_mode = false;
+    bool more = (PlayerQueueCount() > 0);
+    xSemaphoreGive(s_q_lock);
+    if (more) {
+        xSemaphoreGive(s_play_sem);
+    }
+    ESP_LOGI(TAG, "batch end (queue=%d, wake=%d)", (int)PlayerQueueCount(), (int)more);
 }

@@ -39,6 +39,7 @@ typedef enum {
     LED_COLOR_OFF = 0,
     LED_COLOR_WHITE,
     LED_COLOR_BLUE,
+    LED_COLOR_BLUE_BLINK,   /* WiFi 断开重连中：蓝闪 */
     LED_COLOR_YELLOW,
     LED_COLOR_RED,
 } LedColor_t;
@@ -54,18 +55,31 @@ static uint8_t  s_lowbatt_confirmed[4]     = {0, 0, 0, 0};
 static uint8_t  s_offline_confirmed[4]     = {0, 0, 0, 0};  
 static uint32_t s_last_offline_alert_sec[4]= {0, 0, 0, 0};  
 
+/* 强制刷新标志：LedStatusRefresh 置位，task 下一轮忽略"颜色未变"直接重设 */
+static volatile bool s_force_refresh = false;
+
+/* 蓝闪相位：0=灭 1=亮，每轮切换 */
+static bool s_blink_on = false;
+
 static uint32_t LedNowSec(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000000LL);
 }
 
-static void LedSetColor(LedColor_t c)
+static void LedSetColor(LedColor_t c, bool blink_on)
 {
     switch (c) {
         case LED_COLOR_WHITE:  WS2812_SetColor(255, 255, 255); break;
         case LED_COLOR_BLUE:   WS2812_SetColor(0, 0, 255);     break;
         case LED_COLOR_YELLOW: WS2812_SetColor(255, 200, 0);   break;
         case LED_COLOR_RED:    WS2812_SetColor(255, 0, 0);     break;
+        case LED_COLOR_BLUE_BLINK:
+            if (blink_on) {
+                WS2812_SetColor(0, 0, 255);
+            } else {
+                WS2812_Off();
+            }
+            break;
         case LED_COLOR_OFF:
         default:               WS2812_Off();                   break;
     }
@@ -128,7 +142,6 @@ static void LedQueryIfDue(uint32_t now_sec)
     for (uint8_t i = 1; i <= 4; i++) {
         if (cfg->doorbells[i - 1].enabled == 0) continue;
         AppChirp_QueryBattery(i);
-        //AppChirp_SendRtcToNode((uint16_t)i);
         s_query_sent_once[i - 1] = true;
     }
 }
@@ -150,9 +163,8 @@ static void LedUpdateLowbattState(void)
 
         uint16_t mv = AppChirp_GetDoorbellBattery(i);
 
-        /* 如果是静默期，不确认低电量 */
         if (silent) {
-            s_lowbatt_candidate_sec[idx] = 0; // 清空计时，出静默期重新开始
+            s_lowbatt_candidate_sec[idx] = 0;
             continue;
         }
 
@@ -211,7 +223,6 @@ static void LedUpdateOfflineState(void)
         bool is_offline = (last == 0) ||
                           ((now_sec - last) > APP_CHIRP_ONLINE_WINDOW_SEC);
 
-        /* 如果是静默期，不确认离线 */
         if (silent) {
             continue; 
         }
@@ -260,7 +271,7 @@ static LedColor_t LedComputeColor(void)
     /* 静默期内：只显示蓝/白，不判红黄 */
     if (now_sec < LED_STARTUP_SILENT_SEC) {
         if (cfg->wifi_mode == 1 && !WifiStationIsConnected()) {
-            return LED_COLOR_BLUE;
+            return LED_COLOR_BLUE_BLINK;   /* 重连中：蓝闪 */
         }
         if (cfg->led_normal_on) {
             return LED_COLOR_WHITE;
@@ -277,7 +288,7 @@ static LedColor_t LedComputeColor(void)
         if (s_lowbatt_confirmed[i - 1]) return LED_COLOR_YELLOW;
     }
     if (cfg->wifi_mode == 1 && !WifiStationIsConnected()) {
-        return LED_COLOR_BLUE;
+        return LED_COLOR_BLUE_BLINK;       /* 重连中：蓝闪 */
     }
     if (cfg->led_normal_on) {
         return LED_COLOR_WHITE;
@@ -298,7 +309,7 @@ static void LedStatusTask(void *args)
         s_query_sent_once[i - 1] = true;
     }
 
-    LedColor_t last_color = LED_COLOR_OFF;
+    LedColor_t last_color = (LedColor_t)-1;
 
     while (1) {
         uint32_t now_sec = LedNowSec();
@@ -308,9 +319,25 @@ static void LedStatusTask(void *args)
         LedUpdateOfflineState();
 
         LedColor_t c = LedComputeColor();
-        if (c != last_color) {
-            ESP_LOGI(TAG, "LED color %d -> %d", (int)last_color, (int)c);
-            LedSetColor(c);
+
+        /* 蓝闪需要每轮翻转相位；其它颜色只需在变化时重设 */
+        bool need_update = false;
+        if (c == LED_COLOR_BLUE_BLINK) {
+            s_blink_on = !s_blink_on;
+            need_update = true;
+        } else if (c != last_color || s_force_refresh) {
+            s_blink_on = true;   /* 非闪烁时相位无关，置 true 保持颜色 */
+            need_update = true;
+        }
+
+        if (need_update) {
+            if (s_force_refresh) {
+                ESP_LOGI(TAG, "force refresh, LED color=%d", (int)c);
+                s_force_refresh = false;
+            } else if (c != last_color) {
+                ESP_LOGI(TAG, "LED color %d -> %d", (int)last_color, (int)c);
+            }
+            LedSetColor(c, s_blink_on);
             last_color = c;
         }
 
@@ -335,6 +362,8 @@ esp_err_t LedStatusInit(void)
     }
     s_last_query_minute = 0xFFFFFFFF;
     s_last_query_sec    = 0xFFFFFFFF;
+    s_force_refresh     = false;
+    s_blink_on          = true;
 
     BaseType_t ret = xTaskCreate(LedStatusTask, "led_status_task",
                                  4096, NULL, 4, NULL);
@@ -347,7 +376,15 @@ esp_err_t LedStatusInit(void)
     return ESP_OK;
 }
 
+/* 配置保存后调用：立即应用亮度并触发下一轮强制刷新颜色 */
 void LedStatusRefresh(void)
 {
-    ESP_LOGI(TAG, "LedStatusRefresh requested");
+    SysConfig_t *cfg = AppConfig_Get();
+    uint8_t bri = cfg->led_brightness;
+    if (bri < 10) bri = 10;
+    if (bri > 100) bri = 100;
+    WS2812_SetBrightness(bri);
+
+    s_force_refresh = true;
+    ESP_LOGI(TAG, "LedStatusRefresh requested (brightness=%u%%)", (unsigned)bri);
 }

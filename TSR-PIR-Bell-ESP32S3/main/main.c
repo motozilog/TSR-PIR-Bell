@@ -25,6 +25,7 @@
 
 #include "app_config.h"
 #include "app_chirp.h"
+#include "app_ip_announce.h"
 
 #include "esp_partition.h"
 #include "esp_flash.h"
@@ -114,6 +115,9 @@ void app_main(void)
     if (Es8311IsReady())
         PlayerInit();
 
+    /* IP 播报任务：需在 PlayerInit 之后，WiFi 连接成功时由 bsp_wifistation 置标志触发 */
+    AppIpAnnounceInit();
+
     xTaskCreate(key_task, "key_task", 4096, NULL, 5, NULL);
 
     SysConfig_t *cfg_boot = AppConfig_Get();
@@ -139,40 +143,32 @@ void app_main(void)
 
     SysConfig_t *cfg = AppConfig_Get();
 
-    if (cfg->wifi_mode == 1 && cfg->ssid[0] != '\0')
+    if (cfg->wifi_mode == 1)
     {
-        const char *ip_mode_str = (cfg->ip_mode == 1) ? "static" : "dhcp";
-
-        ESP_LOGI(TAG, "Config mode=station, trying to connect to %s", cfg->ssid);
-        ESP_LOGI(TAG, "IP mode: %s", ip_mode_str);
-
-        if (WifiStationStart(cfg->ssid, cfg->password,
-                             ip_mode_str,
-                             cfg->ip, cfg->netmask, cfg->gateway,
-                             cfg->dns1, cfg->dns2) == ESP_OK)
-        {
-            EventGroupHandle_t eg = WifiStationGetEventGroup();
-            EventBits_t bits = xEventGroupWaitBits(eg,
-                                                   BIT0 | BIT1,
-                                                   pdTRUE, pdFALSE,
-                                                   pdMS_TO_TICKS(15000));
-
-            if (bits & BIT0)
-            {
-                ESP_LOGI(TAG, "===== Station connected successfully =====");
-                NtpInit();
-            }
-            else
-            {
-                ESP_LOGW(TAG, "Station failed, falling back to AP mode");
-                esp_wifi_stop();
-                WifiApStart();
-            }
-        }
-        else
-        {
-            ESP_LOGW(TAG, "Station start failed, falling back to AP mode");
+        /* Station 模式：无限重连，永不回退 AP（除非参数非法兜底） */
+        if (cfg->ssid[0] == '\0') {
+            ESP_LOGW(TAG, "Station mode but SSID empty, fallback to AP");
             WifiApStart();
+        } else {
+            const char *ip_mode_str = (cfg->ip_mode == 1) ? "static" : "dhcp";
+
+            ESP_LOGI(TAG, "Config mode=station, connecting to %s (ip_mode=%s)",
+                     cfg->ssid, ip_mode_str);
+
+            esp_err_t ret = WifiStationStart(cfg->ssid, cfg->password,
+                                             ip_mode_str,
+                                             cfg->ip, cfg->netmask, cfg->gateway,
+                                             cfg->dns1, cfg->dns2);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "WifiStationStart failed: %s, fallback to AP",
+                         esp_err_to_name(ret));
+                WifiApStart();
+            } else {
+                /* 不阻塞等待连接结果，NTP 守护任务会等 WiFi 连上后自动启动 SNTP；
+                 * 断线后由 wifi_reconnect 任务无限重试 */
+                NtpInit();
+                ESP_LOGI(TAG, "Station started (infinite reconnect enabled)");
+            }
         }
     }
     else

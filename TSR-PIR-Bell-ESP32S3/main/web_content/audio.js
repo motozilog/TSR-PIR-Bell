@@ -275,25 +275,31 @@ export function uploadPcm() {
     const file = fileInput.files[0];
     if (!file) {
         showStatus("uploadStatus", "未选择文件", true);
+        alert("上传失败：未选择文件");
         return;
     }
 
     const target = currentUploadTarget;
     if (!target) {
         showStatus("uploadStatus", "未指定目标文件", true);
+        alert("上传失败：未指定目标文件");
         return;
     }
 
     console.log("Uploading", file.name, "as", target, "size:", file.size);
     const MAX_SIZE = 200 * 1024;
     if (file.size > MAX_SIZE) {
-        showStatus("uploadStatus", "文件过大（" + (file.size / 1024).toFixed(1) + " KB），最大 200 KB", true);
+        const msg = "文件过大（" + (file.size / 1024).toFixed(1) + " KB），最大 200 KB";
+        showStatus("uploadStatus", msg, true);
+        alert("上传失败：" + msg);
         fileInput.value = "";
         currentUploadTarget = null;
         return;
     }
     if (!/\.mp3$/i.test(file.name)) {
-        showStatus("uploadStatus", "只允许 .mp3 文件", true);
+        const msg = "只允许 .mp3 文件";
+        showStatus("uploadStatus", msg, true);
+        alert("上传失败：" + msg);
         fileInput.value = "";
         currentUploadTarget = null;
         return;
@@ -315,12 +321,15 @@ export function uploadPcm() {
                 refreshAudioList();
                 refreshAlertAudioList();
             } else {
-                showStatus("uploadStatus", "上传失败：" + (data.msg || "未知错误"), true);
+                const msg = data.msg || "未知错误";
+                showStatus("uploadStatus", "上传失败：" + msg, true);
+                alert("上传失败：" + msg);
             }
         })
         .catch(function (err) {
             console.error("Upload failed:", err);
             showStatus("uploadStatus", "上传失败：" + err.message, true);
+            alert("上传失败：" + err.message);
         })
         .finally(function () {
             fileInput.value = "";
@@ -332,16 +341,24 @@ export function uploadPcm() {
 export function uploadBootMp3() {
     const input = document.getElementById("bootMp3Input");
     const file = input.files[0];
-    if (!file) return;
+    if (!file) {
+        showStatus("bootMp3Status", "未选择文件", true);
+        alert("上传失败：未选择文件");
+        return;
+    }
 
     const MAX = 200 * 1024;
     if (file.size > MAX) {
-        showStatus("bootMp3Status", "文件过大（" + (file.size / 1024).toFixed(1) + " KB），最大 200 KB", true);
+        const msg = "文件过大（" + (file.size / 1024).toFixed(1) + " KB），最大 200 KB";
+        showStatus("bootMp3Status", msg, true);
+        alert("上传失败：" + msg);
         input.value = "";
         return;
     }
     if (!/\.mp3$/i.test(file.name)) {
-        showStatus("bootMp3Status", "只允许 .mp3 文件", true);
+        const msg = "只允许 .mp3 文件";
+        showStatus("bootMp3Status", msg, true);
+        alert("上传失败：" + msg);
         input.value = "";
         return;
     }
@@ -367,6 +384,7 @@ export function uploadBootMp3() {
         .catch(function (err) {
             console.error("Upload boot mp3 failed:", err);
             showStatus("bootMp3Status", "上传失败：" + err.message, true);
+            alert("上传失败：" + err.message);
         })
         .finally(function () {
             input.value = "";

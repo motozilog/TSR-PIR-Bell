@@ -97,9 +97,27 @@ static esp_err_t ApiVolumeGetHandler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* 音量试听：播完后恢复原音量（延时 6 秒，覆盖常见 default.mp3） */
+static void VolumeRestoreTask(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(6000));
+
+    SysConfig_t *c = AppConfig_Get();
+    uint8_t ov = c->volume ? c->volume : 70;
+    if (ov < 10) ov = 10;
+    if (ov > 100) ov = 100;
+    if (Es8311IsReady()) {
+        Es8311SetVolume(ov);
+    }
+    vTaskDelete(NULL);
+}
+
 /**
  * @函数说明        POST /api/volume_test
  *                  body {"volume":70}
+ *                  仅临时试听：设置音量 → 播放 default.mp3 → 播完恢复原音量
+ *                  不写配置、不落盘
  */
 static esp_err_t ApiVolumeTestHandler(httpd_req_t *req)
 {
@@ -136,23 +154,27 @@ static esp_err_t ApiVolumeTestHandler(httpd_req_t *req)
     int vol = vol_item->valueint;
     if (vol < 10) vol = 10;
     if (vol > 100) vol = 100;
-
     cJSON_Delete(root);
 
     SysConfig_t *cfg = AppConfig_Get();
-    cfg->volume = (uint8_t)vol;
-    AppConfig_Save();
+    uint8_t orig_vol = cfg->volume ? cfg->volume : 70;
+    if (orig_vol < 10) orig_vol = 10;
+    if (orig_vol > 100) orig_vol = 100;
 
     if (Es8311IsReady()) {
         Es8311SetVolume((uint8_t)vol);
     }
 
+    /* 播放默认音频（WEB 优先级） */
     PlayerTryPlay(PLAYER_DEFAULT_FILE, PLAYER_OWNER_WEB, 0, 0);
 
-    ESP_LOGI(TAG, "volume test: vol=%d, saved + play default", vol);
+    /* 异步恢复原音量 */
+    xTaskCreate(VolumeRestoreTask, "vol_restore", 2048, NULL, 3, NULL);
 
-    char resp[64];
-    snprintf(resp, sizeof(resp), "{\"ok\":true,\"volume\":%d}", vol);
+    ESP_LOGI(TAG, "volume test: vol=%d (temp, will restore to %u)", vol, orig_vol);
+
+    char resp[80];
+    snprintf(resp, sizeof(resp), "{\"ok\":true,\"volume\":%d,\"saved\":false}", vol);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -170,7 +192,6 @@ static esp_err_t ApiTestChirpHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    /* 读取 body */
     char buf[128] = {0};
     int received = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (received <= 0) {
@@ -192,7 +213,6 @@ static esp_err_t ApiTestChirpHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    /* Hex 转 Bytes */
     const char *hex = hex_item->valuestring;
     size_t hex_len = strlen(hex);
     if (hex_len % 2 != 0 || hex_len == 0 || hex_len > APP_CHIRP_DATA_MAX * 2) {
@@ -214,7 +234,6 @@ static esp_err_t ApiTestChirpHandler(httpd_req_t *req)
     }
     cJSON_Delete(root);
 
-    /* 直接打入 AppChirp 业务层 */
     ESP_LOGI(TAG, "test_chirp: inject %u bytes", data_len);
     AppChirp_OnFrame(data, data_len);
 
@@ -223,7 +242,7 @@ static esp_err_t ApiTestChirpHandler(httpd_req_t *req)
     return ESP_OK;
 }
 
-/* 校验密码合法性：长度 1~16，字符为可打印 ASCII（0x21~0x7E，不含空格） */
+/* 校验密码合法性 */
 static bool IsValidPassword(const char *pw)
 {
     if (pw == NULL) return false;
@@ -238,7 +257,6 @@ static bool IsValidPassword(const char *pw)
 
 /**
  * @函数说明        POST /api/password
- *                  body {"password":"newpass"}
  */
 static esp_err_t ApiPasswordPostHandler(httpd_req_t *req)
 {

@@ -132,7 +132,9 @@ void WebServerInit(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = WEBSERVER_PORT;
     config.max_uri_handlers = 32;
-    config.stack_size = 8192;
+    config.stack_size = 12288;
+    config.recv_wait_timeout = 10;      /* 秒，body 分片慢也够 */
+    config.send_wait_timeout = 35;      /* 秒，覆盖试连 30s */
     config.uri_match_fn = httpd_uri_match_wildcard;
 
     esp_err_t ret = httpd_start(&s_server, &config);

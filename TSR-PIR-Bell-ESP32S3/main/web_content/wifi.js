@@ -107,14 +107,15 @@ export function testVolume() {
         .then(function (resp) { return resp.json(); })
         .then(function (data) {
             if (data.ok) {
-                showStatus("wifiStatus", "音量已保存：" + data.volume + "%，正在播放测试音乐", false);
+                showStatus("wifiStatus",
+                    "正在按 " + data.volume + "% 试听（未保存，播完恢复原音量）", false);
             } else {
-                showStatus("wifiStatus", "音量设置失败", true);
+                showStatus("wifiStatus", "试听失败", true);
             }
         })
         .catch(function (err) {
             console.error("Volume test failed:", err);
-            showStatus("wifiStatus", "音量设置失败：" + err.message, true);
+            showStatus("wifiStatus", "试听失败：" + err.message, true);
         })
         .finally(function () {
             if (btn) btn.disabled = false;
@@ -186,6 +187,15 @@ export function loadWifiConfig() {
                 updateLedBrightnessDisplay();
             }
 
+            const volSlider = document.getElementById("volumeSlider");
+            if (volSlider && typeof cfg.volume === "number") {
+                let v = cfg.volume;
+                if (v < 10) v = 10;
+                if (v > 100) v = 100;
+                volSlider.value = v;
+                updateVolumeDisplay();
+            }
+
             const passInput = document.getElementById("wifiPass");
             if (cfg.has_password) {
                 passInput.value = "";
@@ -239,6 +249,29 @@ export function loadWifiConfig() {
         });
 }
 
+/* 判断网络相关配置是否变化（不含音量/NTP/亮灯/亮度） */
+function isNetworkChanged(oldCfg, newCfg) {
+    if (!oldCfg) return true;
+
+    const norm = function (v) { return v === undefined || v === null ? "" : String(v); };
+
+    if (norm(oldCfg.mode)     !== norm(newCfg.mode))     return true;
+    if (norm(oldCfg.ssid)     !== norm(newCfg.ssid))     return true;
+    if (norm(oldCfg.ip_mode)  !== norm(newCfg.ip_mode))  return true;
+
+    if (newCfg.ip_mode === "static") {
+        if (norm(oldCfg.ip)      !== norm(newCfg.ip))      return true;
+        if (norm(oldCfg.netmask) !== norm(newCfg.netmask)) return true;
+        if (norm(oldCfg.gateway) !== norm(newCfg.gateway)) return true;
+        if (norm(oldCfg.dns1)    !== norm(newCfg.dns1))    return true;
+        if (norm(oldCfg.dns2)    !== norm(newCfg.dns2))    return true;
+    }
+
+    if (newCfg.password && newCfg.password.length > 0) return true;
+
+    return false;
+}
+
 export function saveWifiConfig() {
     const mode = getWifiMode();
     const ssid = document.getElementById("wifiSsid").value;
@@ -246,6 +279,7 @@ export function saveWifiConfig() {
 
     if (mode === "station" && ssid.length === 0) {
         showStatus("wifiStatus", "SSID 不能为空", true);
+        alert("保存失败：SSID 不能为空");
         return;
     }
 
@@ -267,29 +301,40 @@ export function saveWifiConfig() {
     if (isNaN(ledBrightness) || ledBrightness < 10) ledBrightness = 10;
     if (ledBrightness > 100) ledBrightness = 100;
 
+    const volEl = document.getElementById("volumeSlider");
+    let volume = volEl ? parseInt(volEl.value) : 70;
+    if (isNaN(volume) || volume < 10) volume = 10;
+    if (volume > 100) volume = 100;
+
     if (mode === "station" && ipMode === "static") {
         if (!ipAddr || !netmask) {
             showStatus("wifiStatus", "静态IP模式下，IP和掩码不能为空", true);
+            alert("保存失败：静态IP模式下，IP和掩码不能为空");
             return;
         }
         if (!isValidIp(ipAddr)) {
             showStatus("wifiStatus", "IP 格式不正确", true);
+            alert("保存失败：IP 格式不正确");
             return;
         }
         if (!isValidNetmask(netmask)) {
             showStatus("wifiStatus", "掩码格式不正确", true);
+            alert("保存失败：掩码格式不正确");
             return;
         }
         if (gateway && !isValidIp(gateway)) {
             showStatus("wifiStatus", "网关格式不正确", true);
+            alert("保存失败：网关格式不正确");
             return;
         }
         if (dns1 && !isValidIp(dns1)) {
             showStatus("wifiStatus", "DNS主格式不正确", true);
+            alert("保存失败：DNS主格式不正确");
             return;
         }
         if (dns2 && !isValidIp(dns2)) {
             showStatus("wifiStatus", "DNS备格式不正确", true);
+            alert("保存失败：DNS备格式不正确");
             return;
         }
     }
@@ -306,14 +351,26 @@ export function saveWifiConfig() {
         dns2: dns2,
         ntp_server: ntpServer,
         led_normal_on: ledNormalOn,
-        led_brightness: ledBrightness
+        led_brightness: ledBrightness,
+        volume: volume
     };
 
     if (mode === "ap") {
         cfg.password = "";
     }
 
-    console.log("Saving config:", cfg);
+    const networkChanged = isNetworkChanged(currentConfig, cfg);
+    const oldMode = currentConfig ? currentConfig.mode : null;
+
+    console.log("Saving config:", cfg, "networkChanged=", networkChanged);
+
+    /* 网络变更且新配置是 station：需等待试连 + NTP 校验，提示用户 */
+    const needVerify = (networkChanged && mode === "station");
+    if (needVerify) {
+        showStatus("wifiStatus", "正在验证网络连接与NTP（最长30秒），请勿关闭页面…", false);
+        const btn = document.getElementById("saveWifiBtn");
+        if (btn) btn.disabled = true;
+    }
 
     authFetch("/api/wifi_config", {
         method: "POST",
@@ -327,28 +384,30 @@ export function saveWifiConfig() {
         })
         .then(function (r) {
             const data = r.data || {};
-            if (r.ok && data.ok) {
-                showStatus("wifiStatus", "配置已保存", false);
+            if (!r.ok || !data.ok) {
+                const msg = data.msg || "保存失败";
+                showStatus("wifiStatus", msg, true);
+                alert("保存失败：" + msg);
+                return;
+            }
 
+            /* 更新本地快照 */
+            currentConfig = Object.assign({}, currentConfig || {}, cfg);
+
+            if (data.need_reboot === true) {
+                showStatus("wifiStatus", "配置已验证，重启后生效", false);
                 setTimeout(function () {
-                    const oldMode = currentConfig ? currentConfig.mode : null;
                     const newMode = mode;
                     let msg = "";
-
                     if (oldMode !== "station" && newMode === "station") {
-                        msg = "配置已保存，是否立即重启设备以进入新模式？\n\n" +
+                        msg = "网络配置已验证，是否立即重启设备以进入新模式？\n\n" +
                               "重启后：\n- 将连接到 WiFi：" + ssid;
                     } else if (oldMode !== "ap" && newMode === "ap") {
-                        msg = "配置已保存，是否立即重启设备以进入新模式？\n\n" +
-                              "重启后：\n- 将切换为 AP 模式\n- WiFi 名称：OSHWIR\n- 网页地址：192.168.5.1";
+                        msg = "网络配置已变更，是否立即重启设备以进入新模式？\n\n" +
+                              "重启后：\n- 将切换为 AP 模式\n- 网页地址：192.168.5.1";
                     } else {
-                        if (newMode === "station") {
-                            msg = "配置已保存，是否立即重启设备？\n\n重启后将连接到 WiFi：" + ssid;
-                        } else {
-                            msg = "配置已保存，是否立即重启设备？\n\n重启后：\n- AP 模式，WiFi 名称：OSHWIR\n- 网页地址：192.168.5.1";
-                        }
+                        msg = "网络配置已验证，是否立即重启设备？\n\n重启后将连接到 WiFi：" + ssid;
                     }
-
                     if (confirm(msg)) {
                         rebootDevice();
                     } else {
@@ -356,13 +415,36 @@ export function saveWifiConfig() {
                     }
                 }, 100);
             } else {
-                const msg = data.msg || "保存失败";
-                showStatus("wifiStatus", msg, true);
+                showStatus("wifiStatus",
+                    "配置已保存并即时生效（音量/NTP/指示灯已更新）", false);
             }
         })
         .catch(function (err) {
             console.error("Save failed:", err);
-            showStatus("wifiStatus", "保存失败：" + err.message, true);
+
+            /* 试连期间会短暂断开 WiFi，fetch 报 Failed to fetch 属预期；
+             * 提示用户等待恢复并自动刷新页面 */
+            const isNetworkErr = (err && (
+                err.message === "Failed to fetch" ||
+                err.name === "TypeError" ||
+                err.message.indexOf("fetch") >= 0
+            ));
+
+            if (needVerify && isNetworkErr) {
+                showStatus("wifiStatus",
+                    "网络已断开（试连中），正在恢复连接，20秒后自动刷新页面确认结果…", false);
+                alert("网络已断开，正在恢复连接。\n\n20秒后将自动刷新页面，请确认保存结果。\n若仍无法访问，请手动重新连接 WiFi 后刷新。");
+                setTimeout(function () {
+                    location.reload();
+                }, 20000);
+            } else {
+                showStatus("wifiStatus", "保存失败：" + err.message, true);
+                alert("保存失败：" + err.message);
+            }
+        })
+        .finally(function () {
+            const btn = document.getElementById("saveWifiBtn");
+            if (btn) btn.disabled = false;
         });
 }
 

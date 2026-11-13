@@ -164,6 +164,10 @@ void AppChirp_OnFrame(const uint8_t *data, uint8_t data_len)
     const uint8_t *pl = &data[3];
     uint8_t  pl_len = (uint8_t)(data_len - 3);
 
+    /* 用 AppChirp_OpName 打一行，消除 unused-function warning */
+    ESP_LOGI(TAG, "RX op=%s(0x%02X) from 0x%04X, pl_len=%u",
+             AppChirp_OpName(op), op, src, pl_len);
+
     if (op >= 0x50 && op <= 0x5F) {
         uint16_t mv = 0;
         if (op == APP_MSG_BATTERY_REPORT && pl_len >= 2) {

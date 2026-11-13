@@ -13,6 +13,12 @@
 
 static const char *TAG = "BSP_WEB_AUDIO";
 
+/* 上传时播放器忙的提示 */
+#define MSG_PLAYER_BUSY  "{\"ok\":false,\"msg\":\"播放中，请稍后上传\"}"
+
+/* 上传校验超时（30s，覆盖 200KB/24kHz 单声道 ≈ 20s 播放时长） */
+#define UPLOAD_VERIFY_TIMEOUT_MS   30000
+
 /**
  * @函数说明        POST /api/play?file=xxx.mp3
  */
@@ -55,6 +61,9 @@ static esp_err_t ApiPlayHandler(httpd_req_t *req)
 /**
  * POST /api/upload_pcm?name=audioXX.mp3
  * 支持 audio01~10 / lowpwr01~04 / offline01~04 / fullpwr01~04
+ *
+ * 流程：播放中则拒收 → 写 temp → 校验播放 → 成功 remove 目标 + rename temp→目标
+ *       失败删除 temp，目标文件保留
  */
 static esp_err_t ApiUploadPcmHandler(httpd_req_t *req)
 {
@@ -63,9 +72,18 @@ static esp_err_t ApiUploadPcmHandler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    /* 播放中拒收，避免校验播放与当前播放互相干扰 */
+    if (PlayerIsPlaying()) {
+        ESP_LOGW(TAG, "Upload rejected: player busy");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, MSG_PLAYER_BUSY, HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
     char query[128];
     char name[64] = {0};
     char filepath[128];
+    char temp_path[128];
 
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK)
     {
@@ -116,12 +134,15 @@ static esp_err_t ApiUploadPcmHandler(httpd_req_t *req)
     }
 
     snprintf(filepath, sizeof(filepath), "%s/%s", LITTLEFS_MOUNT_POINT, name);
-    ESP_LOGI(TAG, "Upload audio: %s (content_len=%d)", filepath, req->content_len);
+    snprintf(temp_path, sizeof(temp_path), "%s/temp_%s", LITTLEFS_MOUNT_POINT, name);
 
-    FILE *fd = fopen(filepath, "wb");
+    ESP_LOGI(TAG, "Upload audio: %s (temp=%s, content_len=%d)",
+             filepath, temp_path, req->content_len);
+
+    FILE *fd = fopen(temp_path, "wb");
     if (fd == NULL)
     {
-        ESP_LOGE(TAG, "Failed to open %s for write", filepath);
+        ESP_LOGE(TAG, "Failed to open %s for write", temp_path);
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "File open failed");
         return ESP_FAIL;
     }
@@ -138,7 +159,7 @@ static esp_err_t ApiUploadPcmHandler(httpd_req_t *req)
             if (received == HTTPD_SOCK_ERR_TIMEOUT) continue;
             ESP_LOGE(TAG, "Recv failed: %d", received);
             fclose(fd);
-            remove(filepath);
+            remove(temp_path);
             httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Recv failed");
             return ESP_FAIL;
         }
@@ -148,18 +169,33 @@ static esp_err_t ApiUploadPcmHandler(httpd_req_t *req)
     }
     fclose(fd);
 
-    ESP_LOGI(TAG, "Upload done: %s (%d bytes), verify play", filepath, total);
+    ESP_LOGI(TAG, "Upload done: %s (%d bytes), verify play", temp_path, total);
 
-    char play_path[PLAYER_FILENAME_MAX + 2];
-    snprintf(play_path, sizeof(play_path), "/%s", name);
-    bool played_ok = (PlayerPlayFileSync(play_path) == ESP_OK);
+    /* 校验播放：用相对挂载点的临时名
+     * 异步任务跑解码（栈 12KB），避免 httpd 任务栈溢出 */
+    char play_path[PLAYER_FILENAME_MAX + 8];
+    snprintf(play_path, sizeof(play_path), "/temp_%s", name);
+    bool played_ok = (PlayerPlayFileSyncEx(play_path, UPLOAD_VERIFY_TIMEOUT_MS) == ESP_OK);
 
     if (!played_ok) {
-        remove(filepath);
-        ESP_LOGW(TAG, "MP3 verify failed, file removed: %s", filepath);
+        remove(temp_path);
+        ESP_LOGW(TAG, "MP3 verify failed, temp removed: %s (target kept)", temp_path);
         char r[96];
         snprintf(r, sizeof(r),
                  "{\"ok\":false,\"msg\":\"MP3 格式校验或播放失败，已丢弃\"}");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, r, HTTPD_RESP_USE_STRLEN);
+        return ESP_FAIL;
+    }
+
+    /* 成功：先删目标再 rename（LittleFS 覆盖语义不保证，先删保险） */
+    remove(filepath);
+    if (rename(temp_path, filepath) != 0) {
+        ESP_LOGE(TAG, "rename %s -> %s failed", temp_path, filepath);
+        remove(temp_path);
+        char r[96];
+        snprintf(r, sizeof(r),
+                 "{\"ok\":false,\"msg\":\"校验通过但保存失败\"}");
         httpd_resp_set_type(req, "application/json");
         httpd_resp_send(req, r, HTTPD_RESP_USE_STRLEN);
         return ESP_FAIL;
@@ -175,6 +211,9 @@ static esp_err_t ApiUploadPcmHandler(httpd_req_t *req)
 
 /**
  * POST /api/upload_default_mp3
+ *
+ * 流程：播放中则拒收 → 写 temp → 校验播放 → 成功 remove 目标 + rename temp→目标
+ *       失败删除 temp，目标文件保留
  */
 static esp_err_t ApiUploadDefaultMp3Handler(httpd_req_t *req)
 {
@@ -183,8 +222,16 @@ static esp_err_t ApiUploadDefaultMp3Handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    /* 播放中拒收 */
+    if (PlayerIsPlaying()) {
+        ESP_LOGW(TAG, "Upload default mp3 rejected: player busy");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, MSG_PLAYER_BUSY, HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
     #define MAX_MP3_SIZE   (200 * 1024)
-    const char *temp_path = LITTLEFS_MOUNT_POINT "/temp.mp3";
+    const char *temp_path = LITTLEFS_MOUNT_POINT "/temp_default.mp3";
     const char *dst_path  = LITTLEFS_MOUNT_POINT "/default.mp3";
 
     char resp[128];
@@ -225,12 +272,14 @@ static esp_err_t ApiUploadDefaultMp3Handler(httpd_req_t *req)
         remaining -= got;
     }
     fclose(fd);
-    ESP_LOGI(TAG, "temp.mp3 saved (%d bytes), start verify play", total);
+    ESP_LOGI(TAG, "temp_default.mp3 saved (%d bytes), start verify play", total);
 
-    played_ok = (PlayerPlayFileSync("/temp.mp3") == ESP_OK);
+    /* 异步任务跑解码，避免 httpd 任务栈溢出 */
+    played_ok = (PlayerPlayFileSyncEx("/temp_default.mp3", UPLOAD_VERIFY_TIMEOUT_MS) == ESP_OK);
 
     if (!played_ok) {
         remove(temp_path);
+        ESP_LOGW(TAG, "default mp3 verify failed, temp removed: %s (target kept)", temp_path);
         snprintf(resp, sizeof(resp),
                  "{\"ok\":false,\"played\":false,\"msg\":\"MP3 格式校验或播放失败，已丢弃\"}");
         goto send_resp;

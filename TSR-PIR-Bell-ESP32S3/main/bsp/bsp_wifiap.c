@@ -13,6 +13,9 @@ static esp_netif_t *s_ap_netif = NULL;
 static EventGroupHandle_t s_wifi_event_group = NULL;
 static bool s_common_inited = false;
 
+/* AP 事件 handler 只注册一次 */
+static bool s_ap_handler_registered = false;
+
 // ===== 公共基础设施初始化 =====
 void WifiCommonInit(void)
 {
@@ -78,7 +81,7 @@ static void WifiApEventHandler(void *arg, esp_event_base_t event_base,
     }
 }
 
-// ===== AP 静态 IP 配置（保持原有） =====
+// ===== AP 静态 IP 配置（保持原有，幂等） =====
 static void WifiApConfigureStaticIp(void)
 {
     esp_netif_dhcps_stop(s_ap_netif);
@@ -100,18 +103,30 @@ static void WifiApConfigureStaticIp(void)
     ESP_LOGI(TAG, "Static IP configured: %s", WIFIAP_IP_ADDR);
 }
 
-// ===== 启动 AP 模式 =====
+// ===== 启动 AP 模式（幂等，可重复调用） =====
 void WifiApStart(void)
 {
-    // 创建 AP netif
-    s_ap_netif = esp_netif_create_default_wifi_ap();
+    /* 1. netif 已存在则复用 */
+    if (s_ap_netif == NULL) {
+        s_ap_netif = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        if (s_ap_netif == NULL) {
+            s_ap_netif = esp_netif_create_default_wifi_ap();
+            ESP_LOGI(TAG, "AP netif created");
+        } else {
+            ESP_LOGI(TAG, "AP netif reused");
+        }
+    }
+
     WifiApConfigureStaticIp();
 
-    // 注册 AP 事件处理
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
-                                                         ESP_EVENT_ANY_ID,
-                                                         &WifiApEventHandler,
-                                                         NULL, NULL));
+    /* 2. 事件 handler 只注册一次 */
+    if (!s_ap_handler_registered) {
+        ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                                                             ESP_EVENT_ANY_ID,
+                                                             &WifiApEventHandler,
+                                                             NULL, NULL));
+        s_ap_handler_registered = true;
+    }
 
     wifi_config_t wifi_config = {
         .ap = {
@@ -124,11 +139,16 @@ void WifiApStart(void)
         },
     };
 
-    // 改为 APSTA 模式
+    /* 3. 切 APSTA 模式并配置，已启动则先停再起 */
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
+
+    wifi_mode_t cur_mode;
+    if (esp_wifi_get_mode(&cur_mode) == ESP_OK) {
+        esp_wifi_stop();
+    }
     ESP_ERROR_CHECK(esp_wifi_start());
-    
+
     ESP_LOGI(TAG, "WiFi APSTA started successfully");
 }
 
