@@ -497,18 +497,34 @@ export function onSsidSelectChange() {
     }
 }
 
-export function loadMacAddress() {
-    authFetch("/api/mac")
+/**
+ * 加载设备信息：MAC + 固件版本 + 编译日期
+ * 显示格式：MAC 单独一行，固件版本显示 "V1.0 (2026-11-14)"
+ */
+export function loadDeviceInfo() {
+    authFetch("/api/device_info")
         .then(function (resp) {
             if (!resp.ok) throw new Error("HTTP " + resp.status);
             return resp.json();
         })
         .then(function (data) {
-            console.log("MAC:", data.mac);
-            document.getElementById("macAddr").textContent = data.mac;
+            console.log("Device info:", data);
+
+            const macEl = document.getElementById("macAddr");
+            if (macEl) macEl.textContent = data.mac || "(不可用)";
+
+            const verEl = document.getElementById("fwVersion");
+            if (verEl) {
+                const ver = data.version || "V?";
+                const date = data.build_date || "";
+                verEl.textContent = date ? (ver + " (" + date + ")") : ver;
+            }
         })
         .catch(function (err) {
-            console.warn("Failed to load MAC:", err);
-            document.getElementById("macAddr").textContent = "(不可用)";
+            console.warn("Failed to load device info:", err);
+            const macEl = document.getElementById("macAddr");
+            if (macEl) macEl.textContent = "(不可用)";
+            const verEl = document.getElementById("fwVersion");
+            if (verEl) verEl.textContent = "(不可用)";
         });
 }

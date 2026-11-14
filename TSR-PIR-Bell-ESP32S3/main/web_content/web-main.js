@@ -6,7 +6,7 @@ import {
 } from "./audio.js";
 import {
     loadWifiConfig, saveWifiConfig, updateModeUI, updateIpModeUI,
-    scanWifi, onSsidSelectChange, loadMacAddress,
+    scanWifi, onSsidSelectChange, loadDeviceInfo,
     loadVolume, updateVolumeDisplay, testVolume,
     updateLedBrightnessDisplay
 } from "./wifi.js";
@@ -61,6 +61,57 @@ function savePassword() {
         });
 }
 
+/* ===== WiFi 密码框显示/隐藏（内嵌 SVG） ===== */
+function bindWifiPassToggle() {
+    const input = document.getElementById("wifiPass");
+    const btn   = document.getElementById("wifiPassToggle");
+    const iconShow = document.getElementById("eyeIconShow"); // 睁眼
+    const iconHide = document.getElementById("eyeIconHide"); // 闭眼
+    if (!input || !btn || !iconShow || !iconHide) return;
+
+    // 增加显式状态变量，不依赖 input.type 推断
+    let isPasswordVisible = false;
+
+    // 更新 UI 状态
+    function updateUI() {
+        if (input.value.length === 0) {
+            btn.style.display = "none"; // 无输入时隐藏按钮
+            isPasswordVisible = false;  // 重置状态
+            input.type = "password";
+            return;
+        }
+        
+        btn.style.display = "flex";     // 有输入时显示按钮
+        
+        if (isPasswordVisible) {
+            input.type = "text";
+            iconShow.style.display = "none";
+            iconHide.style.display = "block";
+        } else {
+            input.type = "password";
+            iconShow.style.display = "block";
+            iconHide.style.display = "none";
+        }
+
+        // 排查日志
+        const activeSvgId = isPasswordVisible ? "eyeIconHide (斜线眼)" : "eyeIconShow (睁眼)";
+        console.log(`[Password Toggle] 状态: isPasswordVisible=${isPasswordVisible} | input.type=${input.type} | 当前激活: ${activeSvgId}`);
+    }
+
+    // 初始化和绑定输入事件
+    updateUI();
+    input.addEventListener("input", updateUI);
+
+    // 绑定点击事件
+    btn.addEventListener("click", function () {
+        if (input.value.length === 0) return; // 理论上不会点，防御
+        
+        isPasswordVisible = !isPasswordVisible;
+        updateUI();
+        input.focus();
+    });
+}
+
 document.addEventListener("DOMContentLoaded", function () {
     buildDoorbellUI();
     buildAudioUI();
@@ -112,6 +163,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
     document.getElementById("ipMode").addEventListener("change", updateIpModeUI);
 
+    /* 绑定 WiFi 密码框显隐按钮 */
+    bindWifiPassToggle();
+
     const volSlider = document.getElementById("volumeSlider");
     if (volSlider) {
         volSlider.addEventListener("input", updateVolumeDisplay);
@@ -129,7 +183,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     loadWifiConfig();
-    loadMacAddress();
+    loadDeviceInfo();
     loadVolume();
     loadAudioConfig().then(function () {
         loadDoorbellConfig();

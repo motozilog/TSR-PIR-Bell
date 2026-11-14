@@ -4,6 +4,9 @@
 #include "esp_err.h"
 #include <stdint.h>
 
+/* ===== 固件语义版本（手工维护，跟发布走） ===== */
+#define FW_VERSION          "V1.0"
+
 /* ===== 全局配置 ===== */
 
 /* 开发者模式：

@@ -185,6 +185,6 @@ void app_main(void)
     /* 电池采样任务：启动 1 分钟后开始，每 30 秒采一次 */
     BatteryInit();    
 
-    ESP_LOGI(TAG, "TSR PIR Bell By motozilog V1.0 compile time: %s %s", __DATE__, __TIME__);
+    ESP_LOGI(TAG, "TSR PIR Bell By motozilog %s compile date: %s", FW_VERSION, __DATE__);
     ESP_LOGI(TAG, "app_main done");
 }

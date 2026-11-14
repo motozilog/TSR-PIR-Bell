@@ -44,31 +44,80 @@ static esp_err_t ApiRebootHandler(httpd_req_t *req)
 }
 
 /**
- * @函数说明        GET /api/mac
+ * @函数说明        把 __DATE__（"Mmm dd yyyy"，如 "Nov 14 2026"，日可能带前导空格）
+ *                  转成 "yyyy-MM-dd"（如 "2026-11-14"）
+ * @传入参数        date_str  __DATE__ 字符串
+ * @传入参数        out       输出缓冲
+ * @传入参数        out_len   缓冲长度（≥11）
+ * @函数返回        true=成功  false=解析失败
  */
-static esp_err_t ApiMacHandler(httpd_req_t *req)
+static bool ConvertBuildDate(const char *date_str, char *out, size_t out_len)
+{
+    if (date_str == NULL || out == NULL || out_len < 11) return false;
+
+    static const char *months[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+
+    char mon[4] = {0};
+    int day = 0, year = 0;
+
+    /* __DATE__ 固定格式："Mmm dd yyyy"，日可能 " 4" 或 "14" */
+    if (sscanf(date_str, "%3s %d %d", mon, &day, &year) != 3) {
+        return false;
+    }
+
+    int mon_idx = -1;
+    for (int i = 0; i < 12; i++) {
+        if (strcmp(mon, months[i]) == 0) { mon_idx = i + 1; break; }
+    }
+    if (mon_idx < 0 || day < 1 || day > 31 || year < 2000) {
+        return false;
+    }
+
+    snprintf(out, out_len, "%04d-%02d-%02d", year, mon_idx, day);
+    return true;
+}
+
+/**
+ * @函数说明        GET /api/device_info
+ *                  需鉴权，返回 MAC + 固件版本 + 编译日期 + 芯片
+ */
+static esp_err_t ApiDeviceInfoHandler(httpd_req_t *req)
 {
     if (!BspWebCheckAuth(req)) {
         httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Unauthorized");
         return ESP_FAIL;
     }
 
+    /* 取 MAC（优先 STA，AP 兜底） */
     uint8_t mac[6] = {0};
     esp_err_t ret = esp_wifi_get_mac(WIFI_IF_STA, mac);
-    if (ret != ESP_OK)
-    {
+    if (ret != ESP_OK) {
         ret = esp_wifi_get_mac(WIFI_IF_AP, mac);
     }
 
-    char buf[32];
-    snprintf(buf, sizeof(buf), MACSTR, MAC2STR(mac));
+    char mac_str[32];
+    snprintf(mac_str, sizeof(mac_str), MACSTR, MAC2STR(mac));
+
+    /* 编译日期转换：__DATE__ "Nov 14 2026" -> "2026-11-14" */
+    char build_date[16] = {0};
+    if (!ConvertBuildDate(__DATE__, build_date, sizeof(build_date))) {
+        ESP_LOGW(TAG, "Convert build date failed: %s", __DATE__);
+        build_date[0] = '\0';
+    }
 
     cJSON *out = cJSON_CreateObject();
-    cJSON_AddStringToObject(out, "mac", buf);
+    cJSON_AddStringToObject(out, "mac", mac_str);
+    cJSON_AddStringToObject(out, "version", FW_VERSION);
+    cJSON_AddStringToObject(out, "build_date", build_date);
+    cJSON_AddStringToObject(out, "chip", "ESP32S3");
+
     char *out_str = cJSON_PrintUnformatted(out);
     cJSON_Delete(out);
 
-    ESP_LOGI(TAG, "MAC: %s", buf);
+    ESP_LOGI(TAG, "device info: %s", out_str);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, out_str, HTTPD_RESP_USE_STRLEN);
     free(out_str);
@@ -165,10 +214,8 @@ static esp_err_t ApiVolumeTestHandler(httpd_req_t *req)
         Es8311SetVolume((uint8_t)vol);
     }
 
-    /* 播放默认音频（WEB 优先级） */
     PlayerTryPlay(PLAYER_DEFAULT_FILE, PLAYER_OWNER_WEB, 0, 0);
 
-    /* 异步恢复原音量 */
     xTaskCreate(VolumeRestoreTask, "vol_restore", 2048, NULL, 3, NULL);
 
     ESP_LOGI(TAG, "volume test: vol=%d (temp, will restore to %u)", vol, orig_vol);
@@ -321,13 +368,13 @@ esp_err_t BspWebSystemRegister(httpd_handle_t server)
     };
     httpd_register_uri_handler(server, &api_reboot);
 
-    httpd_uri_t api_mac = {
-        .uri      = "/api/mac",
+    httpd_uri_t api_device_info = {
+        .uri      = "/api/device_info",
         .method   = HTTP_GET,
-        .handler  = ApiMacHandler,
+        .handler  = ApiDeviceInfoHandler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(server, &api_mac);
+    httpd_register_uri_handler(server, &api_device_info);
 
     httpd_uri_t api_volume_get = {
         .uri      = "/api/volume",

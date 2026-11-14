@@ -120,6 +120,45 @@ h1 {
     background: transparent;
 }
 
+/* ---------- 密码框 + 显示/隐藏眼睛 ---------- */
+.pass-input-wrap {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: center;
+}
+
+.pass-input-wrap input {
+    width: 100%;
+    padding-right: 40px;   /* 给右侧按钮留空间，避免文字被遮 */
+}
+
+.pass-toggle-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    color: #666;
+    line-height: 1;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.pass-toggle-btn:hover {
+    background-color: #f0f0f0;
+}
+
+.pass-toggle-btn svg {
+    display: block;
+}
+
 /* ---------- 按钮 ---------- */
 .action-btn {
     font-size: 16px;
