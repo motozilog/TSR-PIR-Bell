@@ -3,7 +3,6 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "lwip/ip_addr.h"
-#include "bsp_led.h"
 #include "esp_mac.h"
 #include "dhcpserver/dhcpserver.h"
 
@@ -164,47 +163,13 @@ EventGroupHandle_t WifiApGetEventGroup(void)
     return s_wifi_event_group;
 }
 
-// LedBlinkTask 保持不变
 /**
- * @函数说明        LED 闪烁任务
- *                  监听 WiFi 连接状态，有客户端时闪烁
+ * @函数说明        原有的 LedBlinkTask 会导致 IO48 不受控闪烁
+ *                  根据最新需求，IO48 仅用于重置提示，因此该任务置空
  */
 void LedBlinkTask(void *pvParameters)
 {
     (void)pvParameters;
-    EventGroupHandle_t event_group = WifiApGetEventGroup();
-    bool led_state = false;
-    bool client_connected = false;
-
-    while (1)
-    {
-        // 检查是否有客户端连接
-        EventBits_t bits = xEventGroupGetBits(event_group);
-
-        if (bits & WIFIAP_STA_CONNECTED_BIT)
-        {
-            client_connected = true;
-        }
-        else if (bits & WIFIAP_STA_DISCONNECTED_BIT)
-        {
-            client_connected = false;
-        }
-
-        if (client_connected)
-        {
-            // 有客户端连接，闪烁 LED
-            led_state = !led_state;
-            if (led_state)
-                LedOn();
-            else
-                LedOff();
-        }
-        else
-        {
-            // 没有客户端，LED 熄灭
-            LedOff();
-        }
-
-        vTaskDelay(500 / portTICK_PERIOD_MS);  // 500ms = 0.5s
-    }
+    /* 直接删除自身，不再控制 IO48 */
+    vTaskDelete(NULL);
 }

@@ -40,6 +40,7 @@ static void key_task(void *args)
     bool last_pressed = false;
     int press_count = 0;
     bool reset_done = false;
+    bool led_forced_off = false;
     int64_t start_us = esp_timer_get_time();
 
     while (1)
@@ -47,18 +48,22 @@ static void key_task(void *args)
         int64_t elapsed_ms = (esp_timer_get_time() - start_us) / 1000;
         bool window_open = (elapsed_ms <= 60000);
 
+        /* 60秒窗口期结束，强制熄灭 IO48，并且只执行一次 */
+        if (!window_open && !led_forced_off) {
+            LedOff();
+            led_forced_off = true;
+            ESP_LOGI(TAG, "[reset] 60s window closed, force IO48 LOW (LED OFF)");
+        }
+
         bool now_pressed = (GetKeyValue() == 0);
         if (now_pressed && !last_pressed)
         {
-            LedOn();
-            vTaskDelay(100 / portTICK_PERIOD_MS);
-            LedOff();
+            /* 只有在开机 60 秒重置窗口期内，按下才点亮 IO48 作为重置提示 */
+            if (window_open && !reset_done) {
+                LedOn();
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+                LedOff();
 
-            ESP_LOGI(TAG, "[key] pressed, trigger play (KEY priority)");
-            PlayerTryPlay(NULL, PLAYER_OWNER_KEY, 0, 0);
-
-            if (window_open && !reset_done)
-            {
                 press_count++;
                 ESP_LOGI(TAG, "[reset] press %d/5, elapsed=%lld ms",
                          press_count, (long long)elapsed_ms);
@@ -66,13 +71,19 @@ static void key_task(void *args)
                 if (press_count >= 5)
                 {
                     ESP_LOGI(TAG, "[reset] ===== RESET TRIGGERED =====");
+                    /* 重置时点亮常亮 500ms 提示 */
+                    LedOn();
                     AppConfig_ResetToDefault();
                     ESP_LOGI(TAG, "[reset] Config reset to default");
                     reset_done = true;
-
                     vTaskDelay(500 / portTICK_PERIOD_MS);
                     esp_restart();
                 }
+            }
+            else {
+                /* 非重置期的按键：依然触发播放，但不亮 IO48 */
+                ESP_LOGI(TAG, "[key] pressed, trigger play (KEY priority)");
+                PlayerTryPlay(NULL, PLAYER_OWNER_KEY, 0, 0);
             }
         }
         last_pressed = now_pressed;
@@ -82,7 +93,9 @@ static void key_task(void *args)
 
 void app_main(void)
 {
-    /* 打印 PSRAM 状态，确认是否启用成功 */
+    /* 将 IO48 初始化提前，立刻输出低电平熄灭 LED */
+    LedGpioConfig();
+
     size_t psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
     size_t psram_free  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     if (psram_total > 0) {
@@ -91,8 +104,6 @@ void app_main(void)
     } else {
         ESP_LOGW(TAG, "PSRAM NOT enabled! (total size is 0)");
     }
-
-    LedGpioConfig();
 
     if (WS2812_Init() != ESP_OK)
         ESP_LOGE(TAG, "WS2812 init failed");
@@ -115,7 +126,6 @@ void app_main(void)
     if (Es8311IsReady())
         PlayerInit();
 
-    /* IP 播报任务：需在 PlayerInit 之后，WiFi 连接成功时由 bsp_wifistation 置标志触发 */
     AppIpAnnounceInit();
 
     xTaskCreate(key_task, "key_task", 4096, NULL, 5, NULL);
@@ -145,7 +155,6 @@ void app_main(void)
 
     if (cfg->wifi_mode == 1)
     {
-        /* Station 模式：无限重连，永不回退 AP（除非参数非法兜底） */
         if (cfg->ssid[0] == '\0') {
             ESP_LOGW(TAG, "Station mode but SSID empty, fallback to AP");
             WifiApStart();
@@ -164,8 +173,6 @@ void app_main(void)
                          esp_err_to_name(ret));
                 WifiApStart();
             } else {
-                /* 不阻塞等待连接结果，NTP 守护任务会等 WiFi 连上后自动启动 SNTP；
-                 * 断线后由 wifi_reconnect 任务无限重试 */
                 NtpInit();
                 ESP_LOGI(TAG, "Station started (infinite reconnect enabled)");
             }
@@ -179,10 +186,8 @@ void app_main(void)
 
     WebServerInit();
 
-    /* LED 状态机 + 开机查询外机电量 */
     LedStatusInit();
 
-    /* 电池采样任务：启动 1 分钟后开始，每 30 秒采一次 */
     BatteryInit();    
 
     ESP_LOGI(TAG, "TSR PIR Bell By motozilog %s compile date: %s", FW_VERSION, __DATE__);

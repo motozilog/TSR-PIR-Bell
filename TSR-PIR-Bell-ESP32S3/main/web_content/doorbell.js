@@ -1,6 +1,25 @@
 import { AUDIO_COUNT, AUDIO_SILENT, DOORBELL_COUNT, AUDIO_FILES, playFile, getAudioLabel, showStatus, authFetch } from "./common.js";
 import { audioNotes } from "./audio.js";
 
+/* ===== 更新下拉框状态：仅当前选中的模式可用 ===== */
+function updateSelectStates(idx) {
+    const radios = document.querySelectorAll('input[name="doorbell_mode_' + idx + '"]');
+    let selectedMode = "welcome";
+    radios.forEach(function (r) {
+        if (r.checked) selectedMode = r.value;
+    });
+
+    ["welcome", "doorbell", "alarm"].forEach(function (m) {
+        const irSel  = document.getElementById("doorbell_" + m + "_ir_"  + idx);
+        const keySel = document.getElementById("doorbell_" + m + "_key_" + idx);
+        if (irSel && keySel) {
+            const isDisabled = (m !== selectedMode);
+            irSel.disabled = isDisabled;
+            keySel.disabled = isDisabled;
+        }
+    });
+}
+
 /* ===== 外机设置 UI 生成 ===== */
 export function buildDoorbellUI() {
     const container = document.getElementById("doorbellList");
@@ -146,6 +165,7 @@ export function buildDoorbellUI() {
                 });
                 if (radio.checked) {
                     modeRow.classList.add("selected");
+                    updateSelectStates(i); /* 切换模式时更新下拉框禁用状态 */
                 }
             });
 
@@ -195,6 +215,9 @@ export function buildDoorbellUI() {
         });
 
         container.appendChild(block);
+        
+        /* 初始化禁用状态 */
+        updateSelectStates(i);
     }
 }
 
@@ -297,6 +320,8 @@ export function loadDoorbellConfig() {
                     if (irSel  && irVal  !== undefined) irSel.value  = irVal;
                     if (keySel && keyVal !== undefined) keySel.value = keyVal;
                 });
+
+                updateSelectStates(i); /* 加载后更新禁用状态 */
             }
             refreshDoorbellStatus();
         })
