@@ -201,13 +201,75 @@ bool NtpIsSynced(void)
     return NtpCheckSynced();
 }
 
+/**
+ * @函数说明        解析编译时间（__DATE__ 和 __TIME__）
+ *                  返回对应的 Unix 时间戳，解析失败返回 0
+ */
+static time_t NtpParseCompileTime(void)
+{
+    static const char *months[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    };
+    struct tm tm_compile = {0};
+    char mon_str[4] = {0};
+    int day = 0, year = 0;
+    int hour = 0, minute = 0, second = 0;
+
+    // 解析 "Nov 18 2026" 和 "14:30:00"
+    if (sscanf(__DATE__, "%3s %d %d", mon_str, &day, &year) != 3) return 0;
+    if (sscanf(__TIME__, "%d:%d:%d", &hour, &minute, &second) != 3) return 0;
+
+    int mon_idx = -1;
+    for (int i = 0; i < 12; i++) {
+        if (strcmp(mon_str, months[i]) == 0) { mon_idx = i; break; }
+    }
+    if (mon_idx < 0) return 0;
+
+    tm_compile.tm_year = year - 1900;
+    tm_compile.tm_mon  = mon_idx;
+    tm_compile.tm_mday = day;
+    tm_compile.tm_hour = hour;
+    tm_compile.tm_min  = minute;
+    tm_compile.tm_sec  = second;
+    tm_compile.tm_isdst = -1;
+
+    // 依赖系统时区（在 NtpStartSntpLocked 中已设置为 CST-8）
+    // 如果从未启动过 NTP，这里手动 setenv 确保 mktime 计算正确
+    setenv("TZ", NTP_TIMEZONE, 1);
+    tzset();
+
+    return mktime(&tm_compile);
+}
+
+/**
+ * @函数说明        取当前系统时间（秒）。
+ *                  - 如果 NTP 已同步，返回真实系统时间；
+ *                  - 如果未同步（如 AP 模式），返回 编译时间 + 运行时长 作为降级时间。
+ * @函数返回        Unix 时间戳
+ */
 time_t NtpGetTime(void)
 {
     time_t now = time(NULL);
+    
+    // 如果系统时间大于 2020-01-01 (1577836800)，说明 NTP 已同步成功
     if (now > 1577836800) {
         return now;
     }
-    return 0;
+
+    // 系统时间未同步，计算降级时间
+    static time_t compile_ts = 0;
+    if (compile_ts == 0) {
+        compile_ts = NtpParseCompileTime();
+        if (compile_ts == 0) {
+            // 解析极端失败，兜底返回 2020-01-01
+            compile_ts = 1577836800; 
+        }
+        ESP_LOGI(TAG, "NTP not synced, using fallback time (compile_ts: %lld)", (long long)compile_ts);
+    }
+    
+    int64_t uptime_sec = esp_timer_get_time() / 1000000LL;
+    return compile_ts + uptime_sec;
 }
 
 esp_err_t NtpTestServer(const char *server, uint32_t timeout_ms)

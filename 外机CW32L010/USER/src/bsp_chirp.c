@@ -235,7 +235,7 @@ void Chirp_EnterConfigMode(void)
     uint32_t start = GetTick();
     while (CHIRP_AUX_READ() == GPIO_Pin_RESET && (GetTick() - start) < 500);
 
-    Delay_ms(200);
+    Delay_ms(10);
 }
 
 void Chirp_EnterTransparentMode(void)
@@ -246,7 +246,7 @@ void Chirp_EnterTransparentMode(void)
     uint32_t start = GetTick();
     while (CHIRP_AUX_READ() == GPIO_Pin_RESET && (GetTick() - start) < 500);
 
-    Delay_ms(200);
+    Delay_ms(10);
 }
 
 void Chirp_EnterReceiveMode(void)
@@ -257,7 +257,7 @@ void Chirp_EnterReceiveMode(void)
     uint32_t start = GetTick();
     while (CHIRP_AUX_READ() == GPIO_Pin_RESET && (GetTick() - start) < 500);
 
-    Delay_ms(200);
+    Delay_ms(10);
 }
 
 void Chirp_EnterDefaultMode(void)

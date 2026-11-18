@@ -21,6 +21,6 @@
 /* ===== 分机地址配置 ===== */
 /* 本机 ChirpIoT 地址（CW32 室外机 = 0x0001） */
 #define APP_CHIRP_LOCAL_ADDR_H   0x00
-#define APP_CHIRP_LOCAL_ADDR_L   0x02
+#define APP_CHIRP_LOCAL_ADDR_L   0x01
 
 #endif
